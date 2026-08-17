@@ -404,6 +404,17 @@ def main() -> int:
         "n_contaminadas": n_confirmados,
         "n_limpias": int((~contaminadas).sum()),
         "pct_contaminado": round(100 * float(contaminadas.mean()), 4),
+        # Lista completa (no truncada) para que otros scripts puedan reconstruir
+        # el conjunto depurado sin volver a hashear las 58.000 imagenes. Los
+        # indices se refieren al inventario de prueba, que es reproducible con
+        # la semilla de config.yaml.
+        "indices_en_inventario": sorted(
+            int(validos["test"][p]) for p in np.flatnonzero(contaminadas)
+        ),
+        "archivos": sorted(
+            particiones["test"].rutas[int(validos["test"][p])].name
+            for p in np.flatnonzero(contaminadas)
+        ),
     }
 
     print("\n[5/5] Reevaluando sobre el conjunto de prueba depurado")
