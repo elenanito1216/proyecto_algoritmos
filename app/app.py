@@ -619,7 +619,17 @@ def pestana_analisis(
         detalle += f" Hough detectó {inclinacion.n_lineas_detectadas} segmentos en total."
         st.caption(detalle)
 
-    if not inclinacion.fiable:
+    if inclinacion.motivo_rechazo:
+        # Un guardarrail descarto la medida: no es que falten lineas, es que las
+        # que hay describen algo que no puede ser el eje de un elemento en pie.
+        st.error(
+            f"**Medida de desaplome descartada por inverosimil.** "
+            f"{inclinacion.motivo_rechazo}\n\n"
+            "Comprueba en la imagen procesada si las líneas verdes caen sobre el "
+            "borde del elemento o sobre la grieta: si caen sobre la grieta, el "
+            "ángulo no describe un desaplome."
+        )
+    elif not inclinacion.fiable:
         st.warning(f"**Inclinometria poco fiable.** {inclinacion.mensaje}")
 
     st.write("")

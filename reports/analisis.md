@@ -8,7 +8,9 @@ Algoritmos y Programación · Ingeniería en Inteligencia Artificial · Universi
 
 > **Estado de este documento.** Completo. Todas las cifras proceden de artefactos de `reports/metricas/`, generados por `scripts/train_baseline.py`, `scripts/train_transfer.py`, `scripts/export_tflite.py`, `scripts/evaluate.py` y `scripts/validar_inclinacion.py`; la fuente de cada tabla está indicada para que cualquier número sea trazable hasta el archivo que lo respalda.
 >
-> La única laguna que queda es de **tamaño de muestra**, no de ejecución: la validación de la inclinometría (§3.6) se apoya en una sola fotografía, por las razones que allí se explican, y el conjunto de fotos propias son 40 imágenes (§5.7). Ambas limitaciones están declaradas donde corresponde en lugar de disimuladas.
+> **Aviso importante sobre las cifras.** El 15.27 % del conjunto de prueba resultó estar duplicado en el de entrenamiento (§3.7). Donde importa, se reportan las métricas del **conjunto depurado**; las del conjunto completo se conservan para poder comparar contra los artefactos previos y siempre se indican como tales.
+>
+> Las lagunas que quedan son de **tamaño de muestra**, no de ejecución: la validación de la inclinometría (§3.6) se apoya en una sola fotografía, por las razones que allí se explican, y el conjunto de fotos propias son 40 imágenes (§5.7). Ambas están declaradas donde corresponde en lugar de disimuladas.
 
 ---
 
@@ -117,13 +119,27 @@ Todas las cifras salen de artefactos de `reports/metricas/`; la fuente de cada t
 Conjunto de **prueba** (8 721 imágenes: 5 143 sin grieta, 3 578 con grieta), umbral 0.50.
 Fuente: `evaluacion.json` → `modelos.<etiqueta>.test.metricas`
 
+> ⚠️ **Estas cifras están infladas.** El 15.27 % del conjunto de prueba resultó estar duplicado en el de entrenamiento, y los modelos aciertan prácticamente el 100 % de esas imágenes. Las cifras honestas son las de la segunda tabla. El análisis completo está en **§3.7**.
+
+**Conjunto de prueba completo (8 721 imágenes) — contaminado:**
+
 | Modelo | Exactitud | Precisión | Recall | F1 | ROC-AUC | Falsos negativos |
 |---|---|---|---|---|---|---|
 | Línea base (CNN propia) | 0.9490 | 0.9869 | 0.8874 | 0.9345 | 0.9854 | 403 |
-| **MobileNetV2 fine-tuned** | **0.9663** | 0.9943 | **0.9231** | **0.9574** | **0.9921** | **275** |
+| MobileNetV2 fine-tuned | 0.9663 | 0.9943 | 0.9231 | 0.9574 | 0.9921 | 275 |
 | MobileNetV2 TFLite int8 | 0.9570 | 0.9969 | 0.8980 | 0.9449 | 0.9816 | 365 |
 
-Matrices de confusión (VN · FP · FN · VP): línea base 5101 · 42 · 403 · 3175; MobileNetV2 5124 · 19 · 275 · 3303; TFLite int8 5133 · 10 · 365 · 3213.
+**Conjunto de prueba depurado (7 389 imágenes) — sin duplicados de entrenamiento:**
+
+| Modelo | Exactitud | Precisión | Recall | F1 | ROC-AUC | Falsos negativos |
+|---|---|---|---|---|---|---|
+| Línea base (CNN propia) | 0.9400 | 0.9822 | 0.8493 | 0.9109 | 0.9789 | 402 |
+| **MobileNetV2 fine-tuned** | **0.9603** | 0.9925 | **0.8969** | **0.9423** | **0.9887** | **275** |
+| MobileNetV2 TFLite int8 | 0.9495 | 0.9961 | 0.8635 | 0.9251 | 0.9741 | 364 |
+
+**A partir de aquí, el resto del informe usa las cifras del conjunto completo** cuando compara contra artefactos generados antes de detectar la fuga, y lo indica expresamente. Las conclusiones cualitativas —ordenación de los modelos, ventaja del fine-tuning, costo de la cuantización— **no cambian**: la fuga afecta a los tres modelos por igual y no altera su orden relativo.
+
+Matrices de confusión sobre el conjunto completo (VN · FP · FN · VP): línea base 5101 · 42 · 403 · 3175; MobileNetV2 5124 · 19 · 275 · 3303; TFLite int8 5133 · 10 · 365 · 3213.
 
 El efecto del fine-tuning se mide sobre **validación**, no sobre prueba, porque es ahí donde se decidió adoptarlo.
 Fuente: `entrenamiento_mobilenetv2.json` → `metricas_val_congelado` / `metricas_val_finetuned`
@@ -179,11 +195,13 @@ Igual de revelador: la línea base, con **52 veces menos parámetros**, tardó *
 Conjunto propio: 40 fotografías tomadas por el equipo (20 con grieta, 20 sin grieta), nunca usadas para entrenar ni para elegir hiperparámetros.
 Fuente: `evaluacion.json` → `modelos.<etiqueta>.test` frente a `.propias`
 
-| Modelo | F1 en `test` | F1 en `propias` | Brecha | Recall propias | Precisión propias | FN | FP |
+| Modelo | F1 `test` (depurado) | F1 en `propias` | **Brecha** | Recall propias | Precisión propias | FN | FP |
 |---|---|---|---|---|---|---|---|
-| Línea base | 0.9345 | **0.7500** | −0.1845 | 0.60 | 1.000 | 8/20 | 0 |
-| MobileNetV2 | 0.9574 | 0.6667 | −0.2907 | 0.50 | 1.000 | 10/20 | 0 |
-| TFLite int8 | 0.9449 | 0.6207 | **−0.3242** | 0.45 | 1.000 | 11/20 | 0 |
+| Línea base | 0.9109 | **0.7500** | −0.1609 | 0.60 | 1.000 | 8/20 | 0 |
+| MobileNetV2 | 0.9423 | 0.6667 | −0.2756 | 0.50 | 1.000 | 10/20 | 0 |
+| TFLite int8 | 0.9251 | 0.6207 | **−0.3044** | 0.45 | 1.000 | 11/20 | 0 |
+
+*Se usa el F1 del conjunto **depurado** (§3.7): comparar contra el conjunto contaminado exageraría la brecha atribuyendo a desplazamiento de dominio lo que en realidad era memorización. Con el conjunto completo las brechas serían −0.1845, −0.2907 y −0.3242.*
 
 **Este es el resultado más importante de todo el informe, y es incómodo por partida triple.**
 
@@ -273,6 +291,84 @@ Esto tiene dos implicaciones prácticas:
 
 **Verificación adicional sobre imágenes sintéticas.** `tests/test_inclinacion.py` valida el estimador con ángulos exactos conocidos (0°, ±2°, ±5°, ±10°, 20°) y tolerancia de 1.5°, comprueba la robustez frente a segmentos espurios y verifica la fidelidad diferencial bajo rotación. Las 39 pruebas del módulo pasan. Esa batería cubre la corrección **geométrica**; la tabla de arriba cubre el comportamiento sobre **fotografía real**, que es donde entran el ruido del sensor, la compresión JPEG y la iluminación no controlada.
 
+### 3.7 Fuga de datos: el 15 % del conjunto de prueba estaba en el de entrenamiento
+
+Fuente: `reports/metricas/fuga_datos.json`, generado por `scripts/analizar_fuga_datos.py`
+
+#### Por qué había que comprobarlo
+
+El proyecto contemplaba desde el principio el riesgo de fuga por parches: `datos.split.agrupar_por_origen` reparte por superficie de origen en lugar de por imagen. Pero esa salvaguarda **depende de que el nombre del archivo codifique el origen**, y los archivos de este dataset se llaman `00001.jpg`, `00002.jpg`… No hay nada que agrupar. La protección estaba escrita pero era inerte, y el reparto fue aleatorio.
+
+Como el nombre no dice nada, la fuga había que medirla **sobre los píxeles**.
+
+#### Método: proponer con pHash, confirmar con correlación
+
+1. **Proponer.** Se calcula un hash perceptual de 64 bits (DCT sobre la imagen reducida a 32×32, bloque 8×8 de bajas frecuencias sin el coeficiente DC, umbralizado por su mediana) para las 58 138 imágenes, y se busca para cada imagen de prueba su vecino más cercano en entrenamiento por distancia de Hamming. Son 355 millones de pares, resueltos vectorizados en 28 s.
+2. **Confirmar.** Cada candidato se verifica píxel a píxel. **Este segundo paso no es opcional**, y descubrirlo fue parte del hallazgo: el pHash tiene solo 63 bits útiles y los parches de hormigón son extremadamente homogéneos en bajas frecuencias, así que colisiona.
+
+El discriminador correcto resultó ser la **correlación de Pearson**, no el error absoluto medio. En superficies uniformes dos parches sin relación alguna tienen valores de gris parecidos y por tanto un MAE bajo; medido sobre estos datos, el MAE no separa (duplicados reales dan 1.7–2.3, igual que algunos pares no relacionados) mientras que la correlación separa sin ambigüedad:
+
+| Tipo de par | Correlación | MAE |
+|---|---|---|
+| Duplicado exacto | 1.0000 | 0.00 |
+| Misma imagen, otra compresión JPEG | 0.9955 – 0.9978 | 1.7 – 2.3 |
+| Imágenes distintas | 0.0151 – 0.1871 | 20 – 27 |
+
+Un MAE de ~2 con correlación 0.996 es la firma de la misma imagen recodificada, no de dos imágenes parecidas.
+
+#### Resultado
+
+| Medida | Valor |
+|---|---|
+| Candidatos propuestos por el pHash (distancia ≤ 5/64) | 1 370 |
+| **Duplicados confirmados píxel a píxel** | **1 332** |
+| Precisión del pHash como detector | 97.2 % |
+| **Fracción del conjunto de prueba contaminada** | **15.27 %** |
+| Contaminación equivalente en validación | 16.13 % (candidatos) |
+| Duplicados con **etiqueta discordante** entre train y test | 1 |
+
+#### La prueba de que el modelo memorizaba
+
+Al separar el conjunto de prueba en las 1 332 imágenes duplicadas y las 7 389 limpias, el contraste no deja lugar a dudas:
+
+| Modelo | Recall sobre las **duplicadas** | Recall sobre las **limpias** | Diferencia |
+|---|---|---|---|
+| Línea base | 0.9989 (910/911) | 0.8493 | **−0.150** |
+| **MobileNetV2** | **1.0000 (911/911)** | 0.8969 | **−0.103** |
+| TFLite int8 | 0.9989 (910/911) | 0.8635 | **−0.135** |
+
+**MobileNetV2 acierta las 911 imágenes duplicadas sin fallar ni una, y falla el 10.3 % de las limpias.** Eso no es capacidad de generalización: es reconocimiento de imágenes ya vistas durante el entrenamiento.
+
+El detalle que lo confirma: al depurar el conjunto, **los falsos negativos no se mueven** (275 → 275 en MobileNetV2). Se eliminan 911 positivos y los 911 eran aciertos. La fuga no aportaba dificultad, aportaba puntuación gratis.
+
+#### Impacto sobre las métricas
+
+| Modelo | F1 completo | F1 depurado | Δ | Recall completo | Recall depurado | Δ |
+|---|---|---|---|---|---|---|
+| Línea base | 0.9345 | 0.9109 | −0.0236 | 0.8874 | 0.8493 | −0.0381 |
+| MobileNetV2 | 0.9574 | 0.9423 | −0.0151 | 0.9231 | 0.8969 | −0.0263 |
+| TFLite int8 | 0.9449 | 0.9251 | −0.0198 | 0.8980 | 0.8635 | −0.0345 |
+
+Tres lecturas:
+
+1. **El impacto es real pero moderado**: entre 1.5 y 2.4 puntos de F1. No invalida el trabajo; lo corrige.
+2. **La precisión apenas se mueve** (−0.002 a −0.005) mientras el **recall cae hasta 3.8 puntos**. Coherente con lo anterior: las imágenes filtradas eran positivos correctamente clasificados, así que su eliminación golpea al recall y deja intacta la precisión.
+3. **La línea base era la más inflada** (−0.0236) y MobileNetV2 la menos (−0.0151). Tiene sentido: un modelo de 28 145 parámetros no puede aprender el concepto de grieta con la misma solvencia, así que se apoya más en memorizar texturas concretas. La fuga favorecía desproporcionadamente al modelo débil, lo que significa que **la ventaja real del transfer learning es mayor de lo que decía §3.1**, no menor.
+
+#### Lo que esto cambia y lo que no
+
+**No cambia** el orden de los modelos, la conclusión sobre el fine-tuning, el costo de la cuantización ni ninguna de las mediciones de eficiencia de §3.2 y §3.3.
+
+**Sí cambia** la magnitud del contraste con las fotos propias: la brecha de F1 de MobileNetV2 pasa de −0.2907 a **−0.2756** frente al conjunto depurado. Sigue siendo el hallazgo dominante de §3.4, y ahora parte de una base honesta.
+
+**Y cambia el diagnóstico.** Antes de este análisis, la explicación natural de la brecha era «desplazamiento de dominio». Ahora se sabe que **una parte de esa brecha era artificial**: el conjunto de prueba era más fácil de lo que aparentaba porque el modelo ya había visto el 15 % de él.
+
+#### Recomendación
+
+El dataset no permite un reparto sin fuga porque los nombres de archivo no codifican el origen. Con lo que hay, la opción correcta es **deduplicar antes de repartir**: agrupar las imágenes por hash perceptual confirmado y asignar cada grupo entero a una sola partición. Es el equivalente a `agrupar_por_origen`, pero usando los píxeles como identificador de origen en lugar del nombre. Queda propuesto en §8.
+
+**Nota metodológica que merece la pena retener.** El primer veredicto de este análisis —basado solo en el pHash— decía 15.71 % de contaminación. Una verificación apresurada sobre 10 pares sugirió después que el 70 % eran colisiones y que la fuga era despreciable. La verificación exhaustiva sobre los 1 370 candidatos dio el número correcto: 97.2 % confirmados. **Ninguna de las dos primeras cifras era fiable, y las dos eran fáciles de creer.** La lección no es sobre hashing: es que una medición sin verificación y una verificación sin muestra suficiente fallan igual de bien.
+
 ---
 
 ## 4. Análisis de errores
@@ -331,7 +427,7 @@ Los otros dos modelos pagan ese recall mucho más caro: la línea base necesita 
 | Sesgo por perspectiva | La foto no se tomó perpendicular a la superficie | **Sin mitigación.** Es la limitación fundamental del método (§5.2) |
 | Envolvimiento angular al promediar | 179° y 1° son casi la misma dirección | Estadística **axial** (duplicar el ángulo, promediar como vectores, dividir entre dos) en la clasificación de orientación |
 | **La orientación detectada es la del elemento, no la de la grieta** | Hough no distingue semánticamente una fisura de la arista de una columna | Documentado en la interfaz y en §4.4. Sin solución dentro de este enfoque |
-| **La grieta tomada como eje del elemento** (reverso del anterior) | En un primer plano de pared sin aristas, la única recta casi vertical es la propia fisura | Configuración conservadora por defecto y auditoría visual del operador (§4.5). **Es el modo de fallo más peligroso: dispara R5 y produce un riesgo Alto falso** |
+| **La grieta tomada como eje del elemento** (reverso del anterior) | En un primer plano de pared sin aristas, la única recta casi vertical es la propia fisura | **Tres guardarraíles de verosimilitud** (ángulo máximo, dispersión y extensión vertical) que descartan la medida; más auditoría visual del operador (§4.5). Era el modo de fallo más peligroso: disparaba R5 y producía un riesgo Alto falso |
 
 ### 4.4 La orientación de la grieta se confunde con la del elemento
 
@@ -402,11 +498,31 @@ Dos observaciones más del barrido:
 
 La causa raíz es la misma que en §4.4 —**la transformada de Hough encuentra rectas, no sabe qué representa cada una**— manifestándose en la dirección contraria. Confirma que el problema no es de calibración sino de **ausencia de semántica**, y que su solución real es segmentar la fisura antes de medir (§8, punto 3).
 
-Mitigaciones que sí están al alcance del proyecto:
+#### Mitigación implementada: tres guardarraíles de verosimilitud
 
-1. **Configuración conservadora por defecto.** `config.yaml` fija longitud mínima 80 px y una tolerancia vertical de ±35°, valores que en el barrido no producen ninguna medida implausible. Es una elección deliberada: **se prefiere no medir a medir mal**.
-2. **Criterio de lectura para el operador.** Antes de aceptar un desaplome hay que mirar la imagen procesada y comprobar si las líneas verdes caen sobre el borde del elemento o sobre la grieta. Si caen sobre la grieta, el número no significa nada. Este es el propósito real de la comparación lado a lado de la interfaz: permitir la **auditoría visual de la decisión del algoritmo**.
-3. **Regla heurística de verosimilitud.** Un desaplome superior a ~10° en una edificación en pie es casi con seguridad un error de medida, no un hallazgo. No está implementada como filtro automático; se documenta aquí como criterio de interpretación, y sería una adición razonable al motor de reglas.
+A raíz de este hallazgo se añadieron a `estimar_inclinacion()` tres filtros que **descartan la medida en lugar de emitir un número sin sentido**. Ninguno corrige el ángulo: marcan `fiable=False` con su motivo, que es lo que el motor de reglas necesita para no disparar R5 ni R6. Los tres umbrales viven en `config.yaml`.
+
+| Guardarraíl | Umbral | Qué detecta |
+|---|---|---|
+| **Ángulo máximo plausible** | 10° | Una edificación en pie está a pocos grados de plomo; 10° equivalen a un 17.6 % de deriva. Más que eso solo puede venir de medir otra cosa |
+| **Dispersión máxima** | 2.0° (MAD) | Una arista real da segmentos que coinciden (dispersión ~0); una grieta sinuosa da tramos dispares. Medido: 0.00–0.61 midiendo aristas, 1.34–1.50 midiendo grietas |
+| **Extensión vertical mínima** | 30 % del alto | El eje de una columna recorre casi todo el encuadre; un grupo de segmentos cortos y agrupados, no |
+
+**Efecto medido sobre las 40 fotografías propias**, con los mismos controles permisivos que produjeron el caso original (Canny 20/85, longitud 10, votos 35):
+
+| | Antes | Después |
+|---|---|---|
+| Medidas declaradas fiables | 6 | **1** |
+| De ellas, implausibles (> 10°) | 5 | **0** |
+
+Sobrevive exactamente la medida legítima. Los tres casos rechazados que se inspeccionaron fueron **+34.90°** (el original, por ángulo inverosímil), **+17.82°** (por lo mismo) y **+3.28° con dispersión ±3.28°** (por incoherencia entre segmentos) — este último es interesante porque el ángulo sí era plausible y aun así la medida no se sostenía.
+
+**Un conflicto que hubo que resolver.** Los guardarraíles rompían la propia validación del módulo: `validar_con_rotaciones()` gira las fotos ±10° a propósito, generando desaplomes que en una foto de inspección se rechazarían. Aplicarlos allí habría dejado §3.6 sin datos. La solución es el parámetro `aplicar_guardarrailes`, que la validación desactiva de forma explícita y documentada: **el guardarraíl codifica una suposición sobre la escena, no sobre la corrección del algoritmo**, y confundir ambas cosas habría impedido medir el error. Hay una prueba de regresión que lo fija.
+
+Mitigaciones que siguen dependiendo del operador:
+
+1. **Criterio de lectura.** Antes de aceptar un desaplome hay que mirar la imagen procesada y comprobar si las líneas verdes caen sobre el borde del elemento o sobre la grieta. Si caen sobre la grieta, el número no significa nada. Este es el propósito real de la comparación lado a lado de la interfaz: permitir la **auditoría visual de la decisión del algoritmo**. La aplicación muestra ahora un aviso destacado con el motivo concreto cuando un guardarraíl se activa.
+2. **Los guardarraíles reducen el daño, no eliminan la causa.** Una grieta que resultara estar a menos de 10° de la vertical, con tramos coherentes y recorriendo el encuadre, seguiría midiéndose como desaplome. La solución de fondo sigue siendo segmentar la fisura antes de medir (§8, punto 4).
 
 **Este hallazgo apareció usando la aplicación, no ejecutando pruebas.** Es un argumento a favor de haber construido una interfaz que muestra el trabajo intermedio del algoritmo en lugar de solo su conclusión: un panel que hubiera mostrado únicamente «Riesgo Alto · desaplome 34.90°» habría ocultado el error por completo.
 
@@ -529,13 +645,14 @@ La diferencia entre ambos usos no está en la tecnología: está en cómo se pre
 
 En orden de impacto esperado sobre la utilidad real del sistema:
 
-1. **Ampliar el dataset con construcción local**: ladrillo a la vista, pañete, bahareque, fotografiado en Bucaramanga con teléfonos corrientes. Es lo que más mejoraría la utilidad real, y también lo más laborioso.
-2. **Incorporar negativos difíciles**: juntas de dilatación, cables, manchas de humedad, marcas de encofrado. Es lo que más reduciría las falsas alarmas en campo.
-3. **Segmentación en vez de clasificación**: una U-Net ligera daría la máscara de la grieta y permitiría medir su longitud y trayectoria, no solo su presencia.
-4. **Referencia métrica**: un marcador ArUco impreso pegado junto a la grieta resolvería el problema de escala de §5.1 con una impresora y cinco minutos de trabajo. Es la mejora de mayor relación valor/esfuerzo de toda la lista.
-5. **Validación con un ingeniero estructural**: revisar y recalibrar los umbrales del motor de reglas. Convertiría §5.6 de limitación abierta en criterio avalado.
-6. **Aplicación móvil nativa** con el `.tflite` int8 ya exportado, para inspección en campo sin conectividad.
-7. **Estimación de incertidumbre** (*Monte Carlo dropout* o *deep ensembles*), para que el sistema pueda decir «no lo sé» en lugar de emitir una probabilidad sobre una imagen fuera de distribución.
+1. **Deduplicar antes de repartir.** El hallazgo de §3.7 tiene una solución directa: agrupar las imágenes por hash perceptual **confirmado píxel a píxel** y asignar cada grupo entero a una sola partición. Es lo que hace `datos.split.agrupar_por_origen`, pero usando los píxeles como identificador de origen en lugar del nombre de archivo, que en este dataset no codifica nada. `scripts/analizar_fuga_datos.py` ya calcula los grupos; faltaría conectarlos al cargador. Es la mejora de menor esfuerzo y mayor efecto sobre la honestidad de las métricas.
+2. **Ampliar el dataset con construcción local**: ladrillo a la vista, pañete, bahareque, fotografiado en Bucaramanga con teléfonos corrientes. Es lo que más mejoraría la utilidad real, y también lo más laborioso.
+3. **Incorporar negativos difíciles**: juntas de dilatación, cables, manchas de humedad, marcas de encofrado. Es lo que más reduciría las falsas alarmas en campo.
+4. **Segmentación en vez de clasificación**: una U-Net ligera daría la máscara de la grieta y permitiría medir su longitud y trayectoria, no solo su presencia.
+5. **Referencia métrica**: un marcador ArUco impreso pegado junto a la grieta resolvería el problema de escala de §5.1 con una impresora y cinco minutos de trabajo. Es la mejora de mayor relación valor/esfuerzo de toda la lista.
+6. **Validación con un ingeniero estructural**: revisar y recalibrar los umbrales del motor de reglas. Convertiría §5.6 de limitación abierta en criterio avalado.
+7. **Aplicación móvil nativa** con el `.tflite` int8 ya exportado, para inspección en campo sin conectividad.
+8. **Estimación de incertidumbre** (*Monte Carlo dropout* o *deep ensembles*), para que el sistema pueda decir «no lo sé» en lugar de emitir una probabilidad sobre una imagen fuera de distribución.
 
 ---
 
@@ -545,7 +662,7 @@ El proyecto entrega un sistema completo y funcional que combina aprendizaje prof
 
 Lo que **sí** puede afirmarse:
 
-- Detecta grietas en superficies de hormigón similares a las del entrenamiento con **F1 de 0.9574 y un 7.69 % de fuga** (275 falsos negativos sobre 3 578 grietas reales), frente al 0.9345 y 11.26 % de una CNN propia entrenada desde cero (§3.1).
+- Detecta grietas en superficies de hormigón similares a las del entrenamiento con **F1 de 0.9423 sobre el conjunto depurado de duplicados** (275 falsos negativos sobre 2 667 grietas reales), frente al 0.9109 de una CNN propia entrenada desde cero (§3.1 y §3.7).
 - Corre en CPU, sin GPU, a **4.82 ms por imagen (207 img/s) con un artefacto de 1.74 MB**: 30.8× más rápido y 8.0× más pequeño que el modelo Keras del que procede (§3.2). La viabilidad en un dispositivo modesto está medida, no supuesta.
 - Se entrenó por completo en **4 h 5 min de CPU** para los tres modelos (§3.3), lo que lo hace reproducible sin infraestructura especial.
 - Produce un juicio de riesgo **explicable, auditable y recalibrable sin reentrenar**, verificado por 33 pruebas unitarias que incluyen propiedades de monotonía.
@@ -555,6 +672,7 @@ Lo que **sí** puede afirmarse:
 Lo que **no** puede afirmarse:
 
 - **Que generalice a fotografías reales.** Sobre las 40 fotos propias, el F1 cae a 0.6667 y el recall a 0.50: se pierde la mitad de las grietas (§3.4). Y el modelo que gana en el dataset público es el que peor generaliza.
+- **Que el dataset público sea un conjunto de prueba honesto.** El 15.27 % de sus imágenes de prueba estaban duplicadas en entrenamiento, y los modelos las acertaban al 100 % (§3.7). Cualquier resultado publicado sobre este dataset sin deduplicar está inflado.
 - **Que la variante cuantizada pueda ajustarse al dominio de despliegue.** El int8 satura sus probabilidades fuera de distribución y ningún umbral recupera sus falsos negativos (§3.5).
 - **Que el módulo de inclinometría sea aplicable en la práctica.** Es preciso cuando funciona, pero **solo 1 de las 40 fotografías propias produjo una estimación fiable** (§3.6). Su precisión está demostrada; su cobertura, en un 2.5 %, no. Y con `n = 1` no se puede afirmar una precisión media poblacional.
 - Que funcione en materiales y contextos constructivos no representados en el dataset.

@@ -214,6 +214,35 @@ inclinacion:
   # filtro de la resolucion de la foto).
   min_longitud_relativa: 0.15
 
+  # ---------------------------------------------------------------------------
+  # GUARDARRAILES DE VEROSIMILITUD
+  #
+  # Hough encuentra rectas pero no sabe QUE representa cada una. En un primer
+  # plano de pared sin aristas, la unica recta casi vertical es la propia grieta,
+  # y el modulo llegaba a reportarla como "desaplome de 34.90 grados, FIABLE",
+  # disparando la regla R5 y un riesgo Alto falso (reports/analisis.md, §4.5).
+  #
+  # Estos tres filtros descartan la medida en lugar de emitir un numero sin
+  # sentido. Ninguno corrige el angulo: solo marcan fiable=False con su motivo.
+  # ---------------------------------------------------------------------------
+
+  # Desaplome maximo fisicamente verosimil. Una edificacion en pie esta a pocos
+  # grados de plomo: 10 grados equivalen a un 17.6% de deriva, muy por encima de
+  # cualquier estructura que siga en servicio. Un valor mayor indica casi con
+  # seguridad que se esta midiendo otra cosa (una grieta, un cable, un mueble).
+  desaplome_maximo_plausible_grados: 10.0
+
+  # Dispersion maxima (MAD) de los angulos coherentes. Una arista real produce
+  # segmentos que coinciden entre si (dispersion ~0); una grieta sinuosa produce
+  # tramos con orientaciones dispares. Medido sobre las fotos propias: las
+  # configuraciones que miden aristas dan 0.00-0.61, las que miden grietas 1.34-1.50.
+  dispersion_maxima_grados: 2.0
+
+  # Extension vertical minima que deben abarcar los segmentos coherentes, como
+  # fraccion del alto de la imagen. El eje de una columna recorre casi todo el
+  # encuadre; un grupo de segmentos cortos y dispersos, no.
+  min_extension_vertical: 0.30
+
 # Clasificacion de orientacion de la grieta con la misma transformada de Hough.
 # Umbrales en grados respecto a la horizontal (0 = horizontal, 90 = vertical).
 orientacion_grieta:
@@ -277,12 +306,12 @@ app:
     dictamen tecnico bajo la NSR-10.
 
   equipo:
-    - nombre: "Integrante 1"
-      rol: "Datos y EDA"
+    - nombre: "Santiago Gomez Garcia"
+     
     - nombre: "Integrante 2"
-      rol: "Modelos y entrenamiento"
+      
     - nombre: "Integrante 3"
-      rol: "Vision clasica y motor de reglas"
+      
     - nombre: "Integrante 4"
-      rol: "Aplicacion y despliegue"
+      
 

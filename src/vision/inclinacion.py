@@ -71,6 +71,9 @@ class ResultadoInclinacion:
             verticalidad.
         mensaje: Explicacion legible del resultado, pensada para mostrarse en la
             interfaz.
+        motivo_rechazo: Si un guardarrail de verosimilitud descarto la medida,
+            el motivo. ``None`` si no se activo ninguno. Permite a la interfaz
+            distinguir "no se detecto nada" de "se midio algo que no cuadra".
         lineas_validas: Segmentos aceptados como ``(x1, y1, x2, y2)``.
         angulos_validos: Angulo de cada segmento aceptado, en grados.
     """
@@ -82,6 +85,7 @@ class ResultadoInclinacion:
     n_lineas_detectadas: int
     n_lineas_validas: int
     mensaje: str
+    motivo_rechazo: str | None = None
     lineas_validas: list[tuple[int, int, int, int]] = field(default_factory=list)
     angulos_validos: list[float] = field(default_factory=list)
     lineas_descartadas: list[tuple[int, int, int, int]] = field(default_factory=list)
@@ -332,6 +336,62 @@ def detectar_lineas(
 # --------------------------------------------------------------------------- #
 
 
+def _motivo_inverosimil(
+    angulo: float,
+    dispersion: float,
+    lineas: list[tuple[int, int, int, int]],
+    alto_imagen: int,
+    cfg: dict[str, Any],
+) -> str | None:
+    """Comprueba si una medida de desaplome es fisicamente inverosimil.
+
+    Hough no distingue una arista estructural de una grieta ni de un cable: si
+    en el encuadre no hay ningun elemento vertical, la unica recta casi vertical
+    puede ser la propia fisura, y el modulo la reportaria como desaplome. Estos
+    tres criterios detectan ese caso **por las propiedades de la medida**, sin
+    necesidad de entender la escena.
+
+    Args:
+        angulo: Desaplome estimado, en grados.
+        dispersion: MAD de los angulos coherentes, en grados.
+        lineas: Segmentos coherentes que sustentan la medida.
+        alto_imagen: Alto de la imagen en pixeles.
+        cfg: Seccion ``inclinacion`` de la configuracion.
+
+    Returns:
+        Mensaje explicando por que la medida se rechaza, o ``None`` si supera
+        los tres criterios.
+    """
+    maximo = float(cfg.get("desaplome_maximo_plausible_grados", 10.0))
+    if abs(angulo) > maximo:
+        return (
+            f"Desaplome de {abs(angulo):.2f} grados: inverosimil para una edificacion "
+            f"en pie (limite {maximo:.0f} grados). Lo mas probable es que se este "
+            "midiendo una grieta o un objeto, no el eje del elemento. Medida descartada."
+        )
+
+    dispersion_maxima = float(cfg.get("dispersion_maxima_grados", 2.0))
+    if dispersion > dispersion_maxima:
+        return (
+            f"Los segmentos no coinciden entre si (dispersion +-{dispersion:.2f} grados, "
+            f"limite {dispersion_maxima:.1f}). Es la firma de una linea sinuosa, no de "
+            "una arista recta. Medida descartada."
+        )
+
+    minima_extension = float(cfg.get("min_extension_vertical", 0.30))
+    if lineas and alto_imagen > 0:
+        ys = [coord for x1, y1, x2, y2 in lineas for coord in (y1, y2)]
+        extension = (max(ys) - min(ys)) / alto_imagen
+        if extension < minima_extension:
+            return (
+                f"Los segmentos solo abarcan el {100 * extension:.0f}% del alto de la "
+                f"imagen (minimo {100 * minima_extension:.0f}%). No describen un elemento "
+                "vertical completo. Medida descartada."
+            )
+
+    return None
+
+
 def estimar_inclinacion(
     imagen_bgr: np.ndarray,
     config: dict[str, Any],
@@ -340,6 +400,7 @@ def estimar_inclinacion(
     min_longitud: int | None = None,
     max_separacion: int | None = None,
     umbral_hough: int | None = None,
+    aplicar_guardarrailes: bool = True,
 ) -> ResultadoInclinacion:
     """Estima el desaplome de un elemento vertical en la fotografia.
 
@@ -367,6 +428,13 @@ def estimar_inclinacion(
         min_longitud: Longitud minima de segmento (sobrescribe el YAML).
         max_separacion: Hueco maximo dentro de un segmento (sobrescribe el YAML).
         umbral_hough: Votos minimos del acumulador (sobrescribe el YAML).
+        aplicar_guardarrailes: Si se aplican los filtros de verosimilitud
+            (angulo maximo plausible, dispersion y extension vertical). Debe
+            quedar en ``True`` para inspeccion real. Se pone en ``False``
+            unicamente al **validar la geometria** del estimador, donde se
+            generan a proposito angulos que ninguna edificacion en pie tendria:
+            el guardarrail codifica una suposicion sobre la escena, no sobre la
+            correccion del algoritmo, y aplicarlo ahi impediria medir su error.
 
     Returns:
         Objeto :class:`ResultadoInclinacion`.
@@ -459,6 +527,19 @@ def estimar_inclinacion(
             "y no debe usarse para decidir."
         )
 
+    # Guardarrailes de verosimilitud: solo se aplican si la medida habia pasado
+    # el filtro de confianza. Ninguno corrige el angulo; lo declaran no fiable
+    # con el motivo, que es lo que el motor de reglas necesita para no disparar
+    # R5/R6 sobre una medida que no describe el elemento (ver analisis.md, §4.5).
+    motivo_rechazo = None
+    if fiable and aplicar_guardarrailes:
+        motivo_rechazo = _motivo_inverosimil(
+            angulo_final, dispersion, lineas_c, imagen_bgr.shape[0], cfg
+        )
+        if motivo_rechazo is not None:
+            fiable = False
+            mensaje = motivo_rechazo
+
     return ResultadoInclinacion(
         angulo_grados=float(angulo_final),
         fiable=fiable,
@@ -467,6 +548,7 @@ def estimar_inclinacion(
         n_lineas_detectadas=len(lineas),
         n_lineas_validas=len(validas),
         mensaje=mensaje,
+        motivo_rechazo=motivo_rechazo,
         lineas_validas=lineas_c,
         angulos_validos=[float(a) for a in angulos_c],
         lineas_descartadas=descartadas,
@@ -692,7 +774,7 @@ def validar_con_rotaciones(
         ValueError: Si la imagen base no produce una estimacion fiable; sin
             referencia el experimento no tiene sentido.
     """
-    base = estimar_inclinacion(imagen_bgr, config)
+    base = estimar_inclinacion(imagen_bgr, config, aplicar_guardarrailes=False)
     if not base.fiable or base.angulo_grados is None:
         raise ValueError(
             "La imagen de referencia no produce una estimacion fiable "
@@ -708,7 +790,12 @@ def validar_con_rotaciones(
         for signo in (1.0, -1.0):
             alpha = signo * float(magnitud)
             rotada = rotar_imagen(imagen_bgr, alpha)
-            estimacion = estimar_inclinacion(rotada, config)
+            # Los guardarrailes se desactivan a proposito: este experimento
+            # fabrica desaplomes de hasta +-10 grados, que en una fotografia de
+            # inspeccion se rechazarian por inverosimiles. Aqui lo que se mide es
+            # la fidelidad geometrica del estimador, no la plausibilidad de la
+            # escena, asi que aplicarlos impediria justamente medir el error.
+            estimacion = estimar_inclinacion(rotada, config, aplicar_guardarrailes=False)
             esperado = referencia - alpha
 
             caso: dict[str, Any] = {

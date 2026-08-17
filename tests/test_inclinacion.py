@@ -132,7 +132,10 @@ def test_mediana_ponderada_con_pesos_nulos_cae_a_la_mediana_simple() -> None:
 
 @pytest.mark.parametrize("angulo", [0.0, 2.0, -2.0, 5.0, -5.0, 10.0, -10.0, 20.0])
 def test_estimacion_recupera_el_angulo_conocido(angulo: float, config: dict[str, Any]) -> None:
-    resultado = estimar_inclinacion(_imagen_con_linea(angulo), config)
+    # Se desactivan los guardarrailes: aqui se mide la fidelidad GEOMETRICA del
+    # estimador sobre angulos conocidos, incluidos algunos (10, 20 grados) que en
+    # una fotografia de inspeccion real se rechazarian por inverosimiles.
+    resultado = estimar_inclinacion(_imagen_con_linea(angulo), config, aplicar_guardarrailes=False)
     assert resultado.fiable, f"No se detectaron lineas fiables para {angulo} grados"
     assert resultado.angulo_grados == pytest.approx(angulo, abs=TOLERANCIA_GRADOS)
 
@@ -184,6 +187,75 @@ def test_la_imagen_original_no_se_modifica_al_anotar(config: dict[str, Any]) -> 
 
 
 # --------------------------------------------------------------------------- #
+# Guardarrailes de verosimilitud (reports/analisis.md, §4.5)
+# --------------------------------------------------------------------------- #
+
+
+def test_desaplome_inverosimil_se_declara_no_fiable(config: dict[str, Any]) -> None:
+    # 25 grados esta muy por encima del limite de 10: en una edificacion en pie
+    # una medida asi solo puede venir de estar midiendo otra cosa.
+    resultado = estimar_inclinacion(_imagen_con_linea(25.0, lado=600, n_lineas=4), config)
+    assert resultado.fiable is False
+    assert resultado.angulo_grados is not None, "el angulo se sigue reportando, solo que no fiable"
+    assert "inverosimil" in resultado.mensaje.lower()
+
+
+def test_el_guardarrail_no_toca_las_medidas_plausibles(config: dict[str, Any]) -> None:
+    # Un desaplome de 3 grados es perfectamente posible y debe pasar intacto.
+    resultado = estimar_inclinacion(_imagen_con_linea(3.0, lado=600, n_lineas=4), config)
+    assert resultado.fiable
+    assert resultado.angulo_grados == pytest.approx(3.0, abs=TOLERANCIA_GRADOS)
+
+
+def test_segmentos_de_poca_extension_vertical_se_rechazan(config: dict[str, Any]) -> None:
+    # Tres segmentos verticales cortos y agrupados: coinciden en angulo, pero no
+    # describen un elemento que recorra el encuadre.
+    lienzo = np.zeros((600, 600, 3), dtype=np.uint8)
+    for k in range(4):
+        x = 250 + k * 25
+        cv2.line(lienzo, (x, 300), (x, 380), (255, 255, 255), 3)
+    resultado = estimar_inclinacion(lienzo, config, min_longitud=40)
+    assert resultado.fiable is False
+    assert "alto de la imagen" in resultado.mensaje
+
+
+def test_el_limite_de_verosimilitud_es_configurable(config: dict[str, Any]) -> None:
+    # Subiendo el umbral, la misma imagen pasa a considerarse fiable: el criterio
+    # vive en config.yaml y no incrustado en el codigo.
+    import copy
+
+    permisiva = copy.deepcopy(config)
+    permisiva["inclinacion"]["desaplome_maximo_plausible_grados"] = 40.0
+
+    imagen = _imagen_con_linea(25.0, lado=600, n_lineas=4)
+    assert estimar_inclinacion(imagen, config).fiable is False
+    assert estimar_inclinacion(imagen, permisiva).fiable is True
+
+
+def test_los_umbrales_de_guardarrail_estan_en_config(config: dict[str, Any]) -> None:
+    cfg = config["inclinacion"]
+    assert cfg["desaplome_maximo_plausible_grados"] > 0
+    assert 0 < cfg["dispersion_maxima_grados"] < 90
+    assert 0 < cfg["min_extension_vertical"] <= 1.0
+    # El limite de verosimilitud debe superar con holgura el umbral de desaplome
+    # severo del motor de reglas; si no, ninguna medida podria disparar R5.
+    assert cfg["desaplome_maximo_plausible_grados"] > config["riesgo"]["desaplome_severo_grados"]
+
+
+def test_la_validacion_por_rotaciones_no_la_bloquea_el_guardarrail(
+    config: dict[str, Any],
+) -> None:
+    # Regresion: el experimento de rotaciones fabrica angulos de hasta 10 grados.
+    # Si los guardarrailes se aplicasen ahi, todos los casos saldrian no fiables
+    # y §3.6 del informe se quedaria sin datos.
+    informe = validar_con_rotaciones(
+        _imagen_con_linea(0.0, lado=600, n_lineas=4), config, angulos_prueba=(10.0,)
+    )
+    assert informe["n_casos_fiables"] == informe["n_casos"] == 2
+    assert informe["error_medio_grados"] < TOLERANCIA_GRADOS
+
+
+# --------------------------------------------------------------------------- #
 # Rotaciones controladas
 # --------------------------------------------------------------------------- #
 
@@ -193,11 +265,11 @@ def test_rotar_desplaza_el_angulo_lo_esperado(alpha: float, config: dict[str, An
     # cv2 rota en sentido antihorario para alpha > 0, con lo que el tope de un
     # elemento vertical se desplaza a la izquierda y la desviacion baja alpha.
     base = _imagen_con_linea(0.0, lado=600, n_lineas=4)
-    estimacion_base = estimar_inclinacion(base, config)
+    estimacion_base = estimar_inclinacion(base, config, aplicar_guardarrailes=False)
     assert estimacion_base.fiable
 
     rotada = rotar_imagen(base, alpha)
-    estimacion_rotada = estimar_inclinacion(rotada, config)
+    estimacion_rotada = estimar_inclinacion(rotada, config, aplicar_guardarrailes=False)
     assert estimacion_rotada.fiable
 
     esperado = estimacion_base.angulo_grados - alpha
