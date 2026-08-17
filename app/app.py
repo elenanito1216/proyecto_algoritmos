@@ -83,7 +83,9 @@ def obtener_predictor(formato: str, ruta: str, marca_tiempo: float) -> Predictor
         Predictor listo para inferir.
     """
     del marca_tiempo  # solo participa en la clave de cache
-    return cargar_predictor(obtener_config(), formato, ruta)
+    # Para el ensemble, 'ruta' es la concatenacion de sus componentes y solo
+    # sirve de clave: cargar_predictor los lee de config.yaml.
+    return cargar_predictor(obtener_config(), formato, None if formato == "ensemble" else ruta)
 
 
 @st.cache_data(show_spinner=False)
@@ -150,15 +152,41 @@ def artefactos_disponibles(config: dict[str, Any]) -> dict[str, bool]:
         config: Configuracion del proyecto.
 
     Returns:
-        Diccionario ``{clave: existe}`` para ``keras``, ``tflite``, ``baseline``
-        y ``evaluacion``.
+        Diccionario ``{clave: existe}`` para ``keras``, ``tflite``, ``baseline``,
+        ``ensemble`` y ``evaluacion``.
     """
+    componentes = obtener(config, "app.ensemble.componentes", []) or []
     return {
         "keras": resolver(obtener(config, "app.archivo_keras")).is_file(),
         "tflite": resolver(obtener(config, "app.archivo_tflite")).is_file(),
         "baseline": resolver(obtener(config, "app.archivo_baseline")).is_file(),
+        "ensemble": bool(componentes) and all(resolver(c).is_file() for c in componentes),
         "evaluacion": resolver("reports/metricas/evaluacion.json").is_file(),
     }
+
+
+def clave_y_marca(config: dict[str, Any], formato: str) -> tuple[str, float]:
+    """Devuelve la clave de cache y la fecha de modificacion de un formato.
+
+    El ensemble no tiene un unico archivo, asi que su clave concatena las rutas
+    de los componentes y su marca es la mas reciente de todas: si se reentrena
+    cualquiera de ellos, la cache se invalida.
+
+    Args:
+        config: Configuracion del proyecto.
+        formato: ``"keras"``, ``"tflite"`` o ``"ensemble"``.
+
+    Returns:
+        Tupla ``(clave, marca_de_tiempo)``.
+    """
+    if formato == "ensemble":
+        componentes = obtener(config, "app.ensemble.componentes", []) or []
+        marca = max((marca_de(c) for c in componentes), default=0.0)
+        return "|".join(str(c) for c in componentes), marca
+
+    clave_config = "app.archivo_keras" if formato == "keras" else "app.archivo_tflite"
+    ruta = obtener(config, clave_config)
+    return str(resolver(ruta)), marca_de(ruta)
 
 
 # --------------------------------------------------------------------------- #
@@ -271,11 +299,12 @@ def construir_barra_lateral(config: dict[str, Any]) -> dict[str, Any]:
         st.divider()
         st.markdown("### 🧠 Modelo")
         disponibles = artefactos_disponibles(config)
-        opciones: list[str] = []
-        if disponibles["keras"]:
-            opciones.append("keras")
-        if disponibles["tflite"]:
-            opciones.append("tflite")
+        etiquetas = {
+            "ensemble": "Ensemble ★",
+            "keras": "MobileNetV2",
+            "tflite": "TFLite int8",
+        }
+        opciones = [f for f in ("ensemble", "keras", "tflite") if disponibles[f]]
 
         if not opciones:
             st.error(
@@ -285,19 +314,27 @@ def construir_barra_lateral(config: dict[str, Any]) -> dict[str, Any]:
             )
             estado["formato"] = None
         else:
-            por_defecto = str(obtener(config, "app.modelo_por_defecto", "keras"))
+            por_defecto = str(obtener(config, "app.modelo_por_defecto", "ensemble"))
             indice = opciones.index(por_defecto) if por_defecto in opciones else 0
             estado["formato"] = st.radio(
                 "Formato activo",
                 opciones,
                 index=indice,
-                horizontal=True,
-                format_func=lambda v: {"keras": "Keras (.keras)", "tflite": "TFLite int8"}[v],
+                format_func=lambda v: etiquetas[v],
                 help=(
-                    "TFLite int8 es el artefacto pensado para movil: mismo modelo, "
-                    "pesos de 8 bits. Compara las latencias abajo."
+                    "**Ensemble**: promedia la CNN de linea base con MobileNetV2. Es el "
+                    "que mejor funciona con fotografias reales, por un 11% de latencia.\n\n"
+                    "**MobileNetV2**: el modelo solo.\n\n"
+                    "**TFLite int8**: la variante para movil, 35x mas rapida."
                 ),
             )
+            if estado["formato"] == "ensemble":
+                st.caption(
+                    "★ Sobre las 40 fotos propias el ensemble sube el F1 de 0.667 a "
+                    "**0.824** y elimina 4 de los 10 falsos negativos, por un 11% de "
+                    "latencia. Curiosamente, en el dataset publico empeora: los dos "
+                    "modelos solo se complementan fuera de distribucion."
+                )
             estado["comparar_latencias"] = st.button(
                 "⚡ Comparar latencias en vivo", use_container_width=True
             )
@@ -372,6 +409,14 @@ def panel_info_modelo(predictor: Predictor) -> None:
         estilos.fila_dato("Archivo", str(info.get("archivo", "-"))),
         estilos.fila_dato("Arquitectura", str(info.get("arquitectura", "-"))),
     ]
+    for componente in info.get("componentes", []):
+        tamano = componente.get("tamano_mb")
+        filas.append(
+            estilos.fila_dato(
+                f"· {componente.get('arquitectura', '?')}",
+                f"{tamano:.2f} MB" if tamano is not None else "-",
+            )
+        )
     if info.get("parametros_total"):
         filas.append(estilos.fila_dato("Parametros", f"{info['parametros_total']:,}"))
     if info.get("tamano_mb") is not None:
@@ -683,11 +728,12 @@ def bloque_comparar_latencias(config: dict[str, Any], imagen_rgb: np.ndarray | N
     else:
         lote = preparar_imagen(imagen_rgb, config)
 
+    formatos = [f for f in ("ensemble", "keras", "tflite") if disponibles[f]]
     filas: list[dict[str, Any]] = []
     with st.spinner("Midiendo 30 inferencias por formato (5 de calentamiento)..."):
-        for formato, clave in (("keras", "app.archivo_keras"), ("tflite", "app.archivo_tflite")):
-            ruta = str(resolver(obtener(config, clave)))
-            predictor = obtener_predictor(formato, ruta, marca_de(obtener(config, clave)))
+        for formato in formatos:
+            clave, marca = clave_y_marca(config, formato)
+            predictor = obtener_predictor(formato, clave, marca)
             for _ in range(5):  # calentamiento: la primera llamada no es representativa
                 predictor.predecir(lote)
             tiempos = [predictor.predecir(lote)[1] for _ in range(30)]
@@ -704,13 +750,34 @@ def bloque_comparar_latencias(config: dict[str, Any], imagen_rgb: np.ndarray | N
     tabla = pd.DataFrame(filas)
     st.dataframe(tabla, use_container_width=True, hide_index=True)
 
-    if len(filas) == 2 and filas[1]["Latencia media (ms)"] > 0:
-        aceleracion = filas[0]["Latencia media (ms)"] / filas[1]["Latencia media (ms)"]
-        reduccion = filas[0]["Tamano (MB)"] / max(filas[1]["Tamano (MB)"] or 1e-9, 1e-9)
-        st.success(
-            f"TFLite int8 es **{aceleracion:.2f}x** en velocidad y **{reduccion:.1f}x** mas "
-            "pequeno en disco respecto al `.keras`. Medido ahora mismo en este equipo, "
-            "con un solo hilo."
+    por_formato = dict(zip(formatos, filas, strict=True))
+
+    if "keras" in por_formato and "tflite" in por_formato:
+        k, t = por_formato["keras"], por_formato["tflite"]
+        if t["Latencia media (ms)"] > 0:
+            aceleracion = k["Latencia media (ms)"] / t["Latencia media (ms)"]
+            reduccion = k["Tamano (MB)"] / max(t["Tamano (MB)"] or 1e-9, 1e-9)
+            st.success(
+                f"TFLite int8 es **{aceleracion:.2f}x** en velocidad y **{reduccion:.1f}x** mas "
+                "pequeno en disco respecto al `.keras`. Medido ahora mismo en este equipo, "
+                "con un solo hilo."
+            )
+
+    if "ensemble" in por_formato and "keras" in por_formato:
+        e, k = por_formato["ensemble"], por_formato["keras"]
+        sobrecoste = 100 * (e["Latencia media (ms)"] / max(k["Latencia media (ms)"], 1e-9) - 1)
+        st.info(
+            f"El **ensemble** cuesta un **{sobrecoste:+.0f}%** de latencia frente a "
+            "MobileNetV2 sola y sube el F1 sobre fotografias reales de 0.667 a "
+            "**0.824**, eliminando 4 de los 10 falsos negativos.\n\n"
+            "La medida de referencia es **+11 %**. La CNN de linea base es solo el "
+            "1.9 % de los parametros del conjunto pero aporta el 11 % del tiempo: "
+            "el numero de parametros predice mal la latencia."
+        )
+        st.caption(
+            "Esta comparacion usa 5 pasadas de calentamiento; con tan pocas, el "
+            "primer formato medido puede salir penalizado por el trazado del grafo. "
+            "Si un resultado te parece imposible, repitela."
         )
 
 

@@ -367,7 +367,77 @@ Tres lecturas:
 
 El dataset no permite un reparto sin fuga porque los nombres de archivo no codifican el origen. Con lo que hay, la opción correcta es **deduplicar antes de repartir**: agrupar las imágenes por hash perceptual confirmado y asignar cada grupo entero a una sola partición. Es el equivalente a `agrupar_por_origen`, pero usando los píxeles como identificador de origen en lugar del nombre. Queda propuesto en §8.
 
-**Nota metodológica que merece la pena retener.** El primer veredicto de este análisis —basado solo en el pHash— decía 15.71 % de contaminación. Una verificación apresurada sobre 10 pares sugirió después que el 70 % eran colisiones y que la fuga era despreciable. La verificación exhaustiva sobre los 1 370 candidatos dio el número correcto: 97.2 % confirmados. **Ninguna de las dos primeras cifras era fiable, y las dos eran fáciles de creer.** La lección no es sobre hashing: es que una medición sin verificación y una verificación sin muestra suficiente fallan igual de bien.
+**Nota metodológica que merece la pena retener (sobre este apartado).** El primer veredicto de este análisis —basado solo en el pHash— decía 15.71 % de contaminación. Una verificación apresurada sobre 10 pares sugirió después que el 70 % eran colisiones y que la fuga era despreciable. La verificación exhaustiva sobre los 1 370 candidatos dio el número correcto: 97.2 % confirmados. **Ninguna de las dos primeras cifras era fiable, y las dos eran fáciles de creer.** La lección no es sobre hashing: es que una medición sin verificación y una verificación sin muestra suficiente fallan igual de bien.
+
+### 3.8 Robustez sin reentrenar: TTA, ensemble y recalibración del umbral
+
+Fuente: `reports/metricas/robustez.json`, generado por `scripts/evaluar_robustez.py`
+
+Ante la brecha de §3.4 —recall de 0.50 sobre fotografías propias— se evaluaron tres técnicas que **no requieren reentrenar** y operan sobre los modelos ya guardados.
+
+1. **Test-time augmentation (TTA).** Se predice sobre varias vistas del grupo diédrico D4 (volteos y giros de 90°) y se agregan las probabilidades. Las transformaciones preservan la etiqueta en este dominio: una grieta girada sigue siendo una grieta, la misma razón por la que el aumento de entrenamiento incluye volteo vertical. Se probaron dos agregaciones con sentidos opuestos: la **media** reduce la varianza, y el **máximo** dispara si *cualquier* vista ve grieta, lo que privilegia el recall.
+2. **Ensemble.** Promedio de la CNN de línea base y de MobileNetV2. La motivación es el resultado de §3.4: el modelo que gana en el dataset público es el que peor generaliza. Si fallan en casos distintos, promediarlos debería batir a ambos fuera de distribución.
+3. **Recalibración del umbral.** El umbral se elige **sobre el conjunto de prueba** (garantizando recall ≥ 95 %) y se aplica después a las fotos propias. Elegirlo sobre las fotos propias y medir en ellas sería circular.
+
+#### Resultados
+
+**Conjunto de prueba depurado (7 389 imágenes), umbral 0.50:**
+
+| Variante | F1 | Recall | Precisión |
+|---|---|---|---|
+| Línea base | 0.9109 | 0.8493 | 0.9822 |
+| MobileNetV2 | 0.9423 | 0.8969 | 0.9925 |
+| Ensemble (media) | 0.9376 | 0.8879 | 0.9933 |
+| MobileNetV2 + TTA4 máximo | 0.9473 | 0.9138 | 0.9835 |
+| **MobileNetV2 + TTA8 máximo** | **0.9483** | **0.9220** | 0.9762 |
+| Ensemble + TTA8 máximo | 0.9309 | 0.9291 | 0.9326 |
+
+**Fotografías propias (40 imágenes):**
+
+| Variante | F1 | Recall | Precisión | FN | F1 (umbral calibrado) | FN |
+|---|---|---|---|---|---|---|
+| Línea base | 0.7500 | 0.60 | 1.000 | 8 | 0.8000 | 6 |
+| MobileNetV2 | 0.6667 | 0.50 | 1.000 | 10 | 0.6875 | 9 |
+| **Ensemble (media)** | **0.8235** | 0.70 | 1.000 | 6 | 0.8000 | 6 |
+| MobileNetV2 + TTA8 media | 0.7097 | 0.55 | 1.000 | 9 | 0.7097 | 9 |
+| **Ensemble + TTA8 media** | 0.7879 | 0.65 | 1.000 | 7 | **0.8571** | **5** |
+
+#### El hallazgo: la técnica que gana dentro de distribución pierde fuera
+
+| Técnica | Efecto en `test` | Efecto en `propias` |
+|---|---|---|
+| TTA8 máximo sobre MobileNetV2 | **+0.0060** F1 | +0.0208 F1 |
+| **Ensemble (media)** | **−0.0047** F1 | **+0.1568** F1 |
+
+**Un equipo que hubiera elegido la técnica mirando solo el conjunto de prueba habría descartado el ensemble**, porque allí empeora ligeramente. Y el ensemble es, con diferencia, lo que mejor funciona sobre fotografías reales: sube el recall de 0.50 a 0.70, elimina 4 de los 10 falsos negativos y mantiene la precisión en 1.000.
+
+Es la **segunda aparición del mismo patrón**. En §3.4 el modelo que ganaba en el dataset público era el que peor generalizaba; aquí ocurre lo mismo con las técnicas de agregación. Dos evidencias independientes de que **el conjunto de prueba público no sirve para tomar decisiones de despliegue** en este proyecto.
+
+Por qué funciona el ensemble: recupera 4 grietas que MobileNetV2 perdía, aportadas por la CNN de 28 145 parámetros. Un modelo tan pequeño no tiene capacidad para memorizar texturas concretas —de hecho §3.7 mostró que era el más beneficiado por la fuga, es decir, el que más memorizaba de lo poco que podía—, y lo que aprende es más grueso y transfiere mejor. **La mejora vino de aprovechar el modelo débil, no de agrandar el fuerte.**
+
+#### El costo decide la recomendación
+
+| Variante | Latencia (mediana) | Pasadas | F1 en `propias` |
+|---|---|---|---|
+| MobileNetV2 | 170.8 ms | 1 | 0.6667 |
+| **Ensemble** | **189.4 ms** (+11 %) | 2 | **0.8235** |
+| MobileNetV2 + TTA4 | 692 ms (+305 %) | 4 | 0.7097 |
+| MobileNetV2 + TTA8 | 1 328 ms (+678 %) | 8 | 0.7097 |
+| Ensemble + TTA8 | 1 503 ms (+780 %) | 16 | 0.7879 (0.8571 calibrado) |
+
+El ensemble cuesta **+18.6 ms, un 11 %**. El TTA8, un **678 %** para la mitad de mejora.
+
+Un matiz de medición que conviene registrar: una primera pasada dio 183 ms para el ensemble y 187 ms para MobileNetV2 sola —es decir, el ensemble *más rápido* que uno de sus propios componentes, que es imposible—. La causa era un calentamiento insuficiente: MobileNetV2 arrastraba una desviación de ±25 ms por trazado de grafo en las primeras llamadas. Con 20 pasadas de calentamiento para todos los formatos y reportando la **mediana** en lugar de la media, el resultado se estabiliza en +11 % y es reproducible. **Una medida de latencia sin calentamiento suficiente puede invertir el orden de dos sistemas.**
+
+Ese 11 % tiene además una lectura interesante: la línea base es el **1.9 % de los parámetros** del conjunto pero aporta el **11 % de la latencia**. Es la misma desproporción de §3.2, donde con 52 veces menos parámetros era solo 8.7 veces más rápida. **El número de parámetros es un mal predictor del tiempo de ejecución**: pesan más la profundidad, el patrón de acceso a memoria y la sobrecarga fija por invocación.
+
+**Recomendación: ensemble simple por media, con el umbral por defecto.** Es la única de las tres técnicas cuya mejora justifica su costo: +0.157 de F1 y 4 falsos negativos menos por un 11 % de latencia. El TTA pide 7 veces más tiempo para menos de un tercio de la mejora.
+
+`Ensemble + TTA8 media` con umbral calibrado alcanza el mejor resultado absoluto (F1 0.8571, recall 0.75, 5 falsos negativos), pero a 1.5 s por imagen queda descartado para uso interactivo. Es la opción para un procesamiento por lotes sin restricción de tiempo.
+
+#### Limitación
+
+Estos resultados sobre fotos propias se apoyan en **40 imágenes**: la diferencia entre 0.6667 y 0.8235 son 4 grietas más detectadas. La dirección del efecto es consistente en todas las variantes con ensemble y coherente con el mecanismo propuesto, pero la magnitud tiene un intervalo de confianza ancho (§5.7). Sobre el conjunto de prueba, con 7 389 imágenes, el efecto medido es fiable y **es negativo**: ahí el ensemble no ayuda.
 
 ---
 
@@ -668,6 +738,7 @@ Lo que **sí** puede afirmarse:
 - Produce un juicio de riesgo **explicable, auditable y recalibrable sin reentrenar**, verificado por 33 pruebas unitarias que incluyen propiedades de monotonía.
 - Permite comprar recall a precio conocido: **97 grietas adicionales por 140 falsas alarmas** al bajar el umbral a 0.2495 (§4.1).
 - Mide la desviación respecto a la vertical con un **error medio de 0.039°** sobre fotografía real, validado con rotaciones controladas de ±2°, ±5° y ±10° (§3.6). Es trece veces mejor que el criterio de aceptación y respalda empíricamente las reglas R5 y R6.
+- Reduce la brecha con fotografías reales **sin reentrenar**: el ensemble de los dos modelos sube el F1 sobre fotos propias de 0.6667 a **0.8235** y elimina 4 de los 10 falsos negativos, por un 11 % de latencia adicional (§3.8).
 
 Lo que **no** puede afirmarse:
 

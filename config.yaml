@@ -295,10 +295,35 @@ app:
   subtitulo: "Deteccion de grietas e inclinacion en elementos estructurales"
   # Modelo cargado por defecto. La app permite conmutar en vivo entre .keras y
   # .tflite para comparar latencias delante del jurado.
-  modelo_por_defecto: "keras"     # "keras" | "tflite"
+  modelo_por_defecto: "ensemble"  # "ensemble" | "keras" | "tflite"
   archivo_keras: "models/mobilenetv2_finetuned.keras"
   archivo_tflite: "models/mobilenetv2_int8.tflite"
   archivo_baseline: "models/baseline_cnn.keras"
+
+  # Ensemble: promedia las probabilidades de varios modelos .keras.
+  #
+  # Es el modo por defecto porque es el que mejor funciona sobre fotografias
+  # reales. Medido en reports/analisis.md (§3.8), sobre las 40 fotos propias:
+  #   MobileNetV2 sola : F1 0.6667, recall 0.50, 10 falsos negativos
+  #   Ensemble         : F1 0.8235, recall 0.70,  6 falsos negativos
+  # a cambio de un 11% de latencia (170.8 -> 189.4 ms de mediana). La linea base
+  # es solo el 1.9% de los parametros pero aporta el 11% del tiempo: el numero
+  # de parametros es un mal predictor de la latencia.
+  #
+  # Advertencia por si alguien lo evalua: sobre el conjunto de prueba PUBLICO el
+  # ensemble empeora ligeramente (0.9423 -> 0.9376). Los dos modelos fallan en
+  # imagenes distintas solo fuera de distribucion. No se elige por el numero del
+  # dataset publico, sino por el de las fotos reales.
+  ensemble:
+    componentes:
+      - "models/baseline_cnn.keras"
+      - "models/mobilenetv2_finetuned.keras"
+    # Reparto por igual. Es la unica configuracion validada: ajustar pesos sobre
+    # 40 fotografias seria sobreajustar la propia muestra de validacion.
+    pesos: [0.5, 0.5]
+    # "media" reduce la varianza; "maximo" dispara si cualquier componente ve
+    # grieta (mas recall, menos precision). Medido: media 0.8235, maximo 0.8000.
+    agregacion: "media"
   max_mb_subida: 10
   aviso_legal: >-
     Este prototipo es orientativo y de caracter academico. NO sustituye la

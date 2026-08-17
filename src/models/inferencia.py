@@ -238,6 +238,89 @@ class PredictorTFLite(Predictor):
         }
 
 
+class PredictorEnsemble(Predictor):
+    """Combina varios predictores promediando sus probabilidades.
+
+    Por que existe
+    --------------
+    Medido sobre las fotografias propias del equipo (reports/analisis.md, §3.8),
+    promediar la CNN de linea base con MobileNetV2 sube el F1 de 0.6667 a 0.8235
+    y elimina 4 de los 10 falsos negativos, **sin coste apreciable de latencia**:
+    la linea base representa el 1.9% de los parametros del conjunto.
+
+    El detalle que lo hace interesante es que sobre el conjunto de prueba publico
+    el ensemble **empeora** ligeramente (0.9423 -> 0.9376). Los dos modelos
+    fallan en imagenes distintas fuera de distribucion, y ahi es donde
+    promediarlos aporta. Elegir la tecnica mirando solo el conjunto de prueba
+    habria llevado a descartarla.
+
+    Attributes:
+        componentes: Predictores que se promedian.
+    """
+
+    def __init__(
+        self,
+        componentes: list[Predictor],
+        pesos: list[float] | None = None,
+        agregacion: str = "media",
+    ) -> None:
+        """Construye el ensemble.
+
+        Args:
+            componentes: Predictores ya cargados. Debe haber al menos uno.
+            pesos: Peso de cada componente. ``None`` reparte por igual, que es
+                la unica configuracion validada: ajustar pesos sobre 40
+                fotografias seria sobreajustar la muestra de validacion.
+            agregacion: ``"media"`` (reduce varianza) o ``"maximo"`` (dispara si
+                cualquier componente ve grieta, privilegiando el recall).
+
+        Raises:
+            ValueError: Si no hay componentes o los pesos no cuadran.
+        """
+        if not componentes:
+            raise ValueError("El ensemble necesita al menos un predictor.")
+        if pesos is not None and len(pesos) != len(componentes):
+            raise ValueError(
+                f"Se dieron {len(pesos)} pesos para {len(componentes)} componentes."
+            )
+
+        super().__init__(componentes[0].ruta.parent, "ensemble")
+        self.componentes = componentes
+        self._pesos = list(pesos) if pesos else [1.0] * len(componentes)
+        self._agregacion = agregacion.lower().strip()
+
+    def _inferir(self, lote: np.ndarray) -> np.ndarray:
+        salidas = np.stack([c.predecir(lote)[0] for c in self.componentes])
+        if self._agregacion == "maximo":
+            return salidas.max(axis=0)
+        return np.average(salidas, axis=0, weights=self._pesos)
+
+    def descripcion(self) -> dict[str, Any]:
+        """Metadatos agregados de los componentes.
+
+        Returns:
+            Diccionario con el total de parametros y tamano sumados, mas la
+            ficha de cada componente.
+        """
+        fichas = [c.descripcion() for c in self.componentes]
+        parametros = [f.get("parametros_total") for f in fichas]
+        tamanos = [f.get("tamano_mb") for f in fichas]
+
+        return {
+            "formato": f"Ensemble ({self._agregacion} de {len(self.componentes)} modelos)",
+            "archivo": " + ".join(c.ruta.name for c in self.componentes),
+            "arquitectura": " + ".join(str(f.get("arquitectura", "?")) for f in fichas),
+            "parametros_total": (
+                sum(p for p in parametros if p) if any(parametros) else None
+            ),
+            "tamano_mb": (
+                round(sum(t for t in tamanos if t), 4) if any(tamanos) else None
+            ),
+            "entrada": fichas[0].get("entrada"),
+            "componentes": fichas,
+        }
+
+
 def cargar_predictor(
     config: dict[str, Any], formato: str = "keras", ruta: str | Path | None = None
 ) -> Predictor:
@@ -245,18 +328,40 @@ def cargar_predictor(
 
     Args:
         config: Configuracion del proyecto.
-        formato: ``"keras"`` o ``"tflite"``.
+        formato: ``"keras"``, ``"tflite"`` o ``"ensemble"``.
         ruta: Ruta explicita al artefacto. Si es ``None`` se toma de la seccion
-            ``app`` del YAML.
+            ``app`` del YAML. Se ignora para el ensemble, cuyos componentes se
+            declaran en ``app.ensemble.componentes``.
 
     Returns:
-        Instancia de :class:`PredictorKeras` o :class:`PredictorTFLite`.
+        Instancia de :class:`PredictorKeras`, :class:`PredictorTFLite` o
+        :class:`PredictorEnsemble`.
 
     Raises:
         FileNotFoundError: Si el artefacto no existe.
-        ValueError: Si el formato no se reconoce.
+        ValueError: Si el formato no se reconoce o el ensemble esta mal definido.
     """
     formato = formato.lower().strip()
+
+    if formato == "ensemble":
+        componentes = obtener(config, "app.ensemble.componentes", []) or []
+        if not componentes:
+            raise ValueError(
+                "El ensemble no tiene componentes. Declara 'app.ensemble.componentes' "
+                "en config.yaml con las rutas de los modelos .keras a promediar."
+            )
+        faltantes = [c for c in componentes if not resolver(c).is_file()]
+        if faltantes:
+            raise FileNotFoundError(
+                f"Faltan componentes del ensemble: {faltantes}. Entrena los modelos "
+                "que faltan o ajusta 'app.ensemble.componentes'."
+            )
+        return PredictorEnsemble(
+            [PredictorKeras(resolver(c)) for c in componentes],
+            pesos=obtener(config, "app.ensemble.pesos"),
+            agregacion=str(obtener(config, "app.ensemble.agregacion", "media")),
+        )
+
     if ruta is None:
         clave = "app.archivo_keras" if formato == "keras" else "app.archivo_tflite"
         ruta = obtener(config, clave)
@@ -274,7 +379,9 @@ def cargar_predictor(
         return PredictorKeras(destino)
     if formato == "tflite":
         return PredictorTFLite(destino)
-    raise ValueError(f"Formato no reconocido: '{formato}'. Usa 'keras' o 'tflite'.")
+    raise ValueError(
+        f"Formato no reconocido: '{formato}'. Usa 'keras', 'tflite' o 'ensemble'."
+    )
 
 
 def predecir_dataset(predictor: Predictor, dataset: Any) -> tuple[np.ndarray, np.ndarray]:

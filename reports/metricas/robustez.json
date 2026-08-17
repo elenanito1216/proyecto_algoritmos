@@ -1,0 +1,1441 @@
+{
+  "dispositivo": {
+    "dispositivo": "CPU",
+    "n_gpus": 0,
+    "nombres_gpu": [],
+    "version_tf": "2.19.0",
+    "python": "3.11.9",
+    "so": "Windows 10",
+    "cpu": "AMD64 Family 23 Model 160 Stepping 0, AuthenticAMD"
+  },
+  "umbral_por_defecto": 0.5,
+  "recall_objetivo": 0.95,
+  "conjuntos": {
+    "test_depurado": {
+      "Linea base": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 7389,
+          "accuracy": 0.9400460143456489,
+          "precision": 0.9822202948829142,
+          "recall": 0.8492688413948256,
+          "f1": 0.9109189623969435,
+          "especificidad": 0.9913172384582803,
+          "balanced_accuracy": 0.920293039926553,
+          "roc_auc": 0.978892012704257,
+          "pr_auc": 0.9718555915467113,
+          "matriz_confusion": {
+            "vn": 4681,
+            "fp": 41,
+            "fn": 402,
+            "vp": 2265
+          },
+          "matriz_confusion_lista": [
+            [
+              4681,
+              41
+            ],
+            [
+              402,
+              2265
+            ]
+          ],
+          "tasa_falsos_negativos": 0.15073115860517436,
+          "tasa_falsos_positivos": 0.00868276154171961
+        },
+        "umbral_calibrado": {
+          "umbral": 0.1539115607738495,
+          "n_muestras": 7389,
+          "accuracy": 0.8734605494654216,
+          "precision": 0.7595923261390888,
+          "recall": 0.9501312335958005,
+          "f1": 0.8442445443944694,
+          "especificidad": 0.8301567132570945,
+          "balanced_accuracy": 0.8901439734264476,
+          "roc_auc": 0.978892012704257,
+          "pr_auc": 0.9718555915467113,
+          "matriz_confusion": {
+            "vn": 3920,
+            "fp": 802,
+            "fn": 133,
+            "vp": 2534
+          },
+          "matriz_confusion_lista": [
+            [
+              3920,
+              802
+            ],
+            [
+              133,
+              2534
+            ]
+          ],
+          "tasa_falsos_negativos": 0.049868766404199474,
+          "tasa_falsos_positivos": 0.16984328674290555
+        },
+        "umbral_elegido": 0.1539115607738495
+      },
+      "MobileNetV2": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 7389,
+          "accuracy": 0.9603464609554744,
+          "precision": 0.9925311203319502,
+          "recall": 0.8968878890138733,
+          "f1": 0.942288753200709,
+          "especificidad": 0.9961880559085133,
+          "balanced_accuracy": 0.9465379724611933,
+          "roc_auc": 0.9886586603612285,
+          "pr_auc": 0.9851042253259308,
+          "matriz_confusion": {
+            "vn": 4704,
+            "fp": 18,
+            "fn": 275,
+            "vp": 2392
+          },
+          "matriz_confusion_lista": [
+            [
+              4704,
+              18
+            ],
+            [
+              275,
+              2392
+            ]
+          ],
+          "tasa_falsos_negativos": 0.10311211098612673,
+          "tasa_falsos_positivos": 0.0038119440914866584
+        },
+        "umbral_calibrado": {
+          "umbral": 0.185275137424469,
+          "n_muestras": 7389,
+          "accuracy": 0.9408580322100419,
+          "precision": 0.8928823114869626,
+          "recall": 0.9501312335958005,
+          "f1": 0.9206176203451408,
+          "especificidad": 0.9356204997882254,
+          "balanced_accuracy": 0.942875866692013,
+          "roc_auc": 0.9886586603612285,
+          "pr_auc": 0.9851042253259308,
+          "matriz_confusion": {
+            "vn": 4418,
+            "fp": 304,
+            "fn": 133,
+            "vp": 2534
+          },
+          "matriz_confusion_lista": [
+            [
+              4418,
+              304
+            ],
+            [
+              133,
+              2534
+            ]
+          ],
+          "tasa_falsos_negativos": 0.049868766404199474,
+          "tasa_falsos_positivos": 0.06437950021177467
+        },
+        "umbral_elegido": 0.185275137424469
+      },
+      "Ensemble (media)": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 7389,
+          "accuracy": 0.9573690621193667,
+          "precision": 0.9932885906040269,
+          "recall": 0.8878890138732658,
+          "f1": 0.9376361116610572,
+          "especificidad": 0.9966116052520119,
+          "balanced_accuracy": 0.9422503095626389,
+          "roc_auc": 0.9881756759439376,
+          "pr_auc": 0.9841148719663466,
+          "matriz_confusion": {
+            "vn": 4706,
+            "fp": 16,
+            "fn": 299,
+            "vp": 2368
+          },
+          "matriz_confusion_lista": [
+            [
+              4706,
+              16
+            ],
+            [
+              299,
+              2368
+            ]
+          ],
+          "tasa_falsos_negativos": 0.11211098612673416,
+          "tasa_falsos_positivos": 0.0033883947479881405
+        },
+        "umbral_calibrado": {
+          "umbral": 0.17925167083740234,
+          "n_muestras": 7389,
+          "accuracy": 0.9334145351197727,
+          "precision": 0.8759073625993778,
+          "recall": 0.9501312335958005,
+          "f1": 0.9115107913669065,
+          "especificidad": 0.9239728928420161,
+          "balanced_accuracy": 0.9370520632189083,
+          "roc_auc": 0.9881756759439376,
+          "pr_auc": 0.9841148719663466,
+          "matriz_confusion": {
+            "vn": 4363,
+            "fp": 359,
+            "fn": 133,
+            "vp": 2534
+          },
+          "matriz_confusion_lista": [
+            [
+              4363,
+              359
+            ],
+            [
+              133,
+              2534
+            ]
+          ],
+          "tasa_falsos_negativos": 0.049868766404199474,
+          "tasa_falsos_positivos": 0.0760271071579839
+        },
+        "umbral_elegido": 0.17925167083740234
+      },
+      "MobileNetV2 + TTA4 media": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 7389,
+          "accuracy": 0.9623765056164569,
+          "precision": 0.9937990905332782,
+          "recall": 0.901387326584177,
+          "f1": 0.9453401494298073,
+          "especificidad": 0.9968233799237611,
+          "balanced_accuracy": 0.949105353253969,
+          "roc_auc": 0.9902498687028797,
+          "pr_auc": 0.986952146320837,
+          "matriz_confusion": {
+            "vn": 4707,
+            "fp": 15,
+            "fn": 263,
+            "vp": 2404
+          },
+          "matriz_confusion_lista": [
+            [
+              4707,
+              15
+            ],
+            [
+              263,
+              2404
+            ]
+          ],
+          "tasa_falsos_negativos": 0.09861267341582303,
+          "tasa_falsos_positivos": 0.0031766200762388818
+        },
+        "umbral_calibrado": {
+          "umbral": 0.1854596585035324,
+          "n_muestras": 7389,
+          "accuracy": 0.9503315739612939,
+          "precision": 0.9154624277456648,
+          "recall": 0.9501312335958005,
+          "f1": 0.9324747010119595,
+          "especificidad": 0.9504447268106735,
+          "balanced_accuracy": 0.950287980203237,
+          "roc_auc": 0.9902498687028797,
+          "pr_auc": 0.986952146320837,
+          "matriz_confusion": {
+            "vn": 4488,
+            "fp": 234,
+            "fn": 133,
+            "vp": 2534
+          },
+          "matriz_confusion_lista": [
+            [
+              4488,
+              234
+            ],
+            [
+              133,
+              2534
+            ]
+          ],
+          "tasa_falsos_negativos": 0.049868766404199474,
+          "tasa_falsos_positivos": 0.04955527318932656
+        },
+        "umbral_elegido": 0.1854596585035324
+      },
+      "MobileNetV2 + TTA4 maximo": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 7389,
+          "accuracy": 0.9633238597915821,
+          "precision": 0.983454398708636,
+          "recall": 0.9137607799025121,
+          "f1": 0.9473275024295432,
+          "especificidad": 0.9913172384582803,
+          "balanced_accuracy": 0.9525390091803962,
+          "roc_auc": 0.9898422798801992,
+          "pr_auc": 0.9865749291863255,
+          "matriz_confusion": {
+            "vn": 4681,
+            "fp": 41,
+            "fn": 230,
+            "vp": 2437
+          },
+          "matriz_confusion_lista": [
+            [
+              4681,
+              41
+            ],
+            [
+              230,
+              2437
+            ]
+          ],
+          "tasa_falsos_negativos": 0.08623922009748781,
+          "tasa_falsos_positivos": 0.00868276154171961
+        },
+        "umbral_calibrado": {
+          "umbral": 0.2559327781200409,
+          "n_muestras": 7389,
+          "accuracy": 0.9480308566788469,
+          "precision": 0.9098743267504489,
+          "recall": 0.9501312335958005,
+          "f1": 0.9295671313279531,
+          "especificidad": 0.9468445573909361,
+          "balanced_accuracy": 0.9484878954933683,
+          "roc_auc": 0.9898422798801992,
+          "pr_auc": 0.9865749291863255,
+          "matriz_confusion": {
+            "vn": 4471,
+            "fp": 251,
+            "fn": 133,
+            "vp": 2534
+          },
+          "matriz_confusion_lista": [
+            [
+              4471,
+              251
+            ],
+            [
+              133,
+              2534
+            ]
+          ],
+          "tasa_falsos_negativos": 0.049868766404199474,
+          "tasa_falsos_positivos": 0.053155442609063956
+        },
+        "umbral_elegido": 0.2559327781200409
+      },
+      "MobileNetV2 + TTA8 media": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 7389,
+          "accuracy": 0.9618351603735282,
+          "precision": 0.9946080464537537,
+          "recall": 0.8991376077990251,
+          "f1": 0.944466325324931,
+          "especificidad": 0.9972469292672597,
+          "balanced_accuracy": 0.9481922685331423,
+          "roc_auc": 0.9905804341166375,
+          "pr_auc": 0.9873274313950211,
+          "matriz_confusion": {
+            "vn": 4709,
+            "fp": 13,
+            "fn": 269,
+            "vp": 2398
+          },
+          "matriz_confusion_lista": [
+            [
+              4709,
+              13
+            ],
+            [
+              269,
+              2398
+            ]
+          ],
+          "tasa_falsos_negativos": 0.10086239220097488,
+          "tasa_falsos_positivos": 0.0027530707327403643
+        },
+        "umbral_calibrado": {
+          "umbral": 0.18217700719833374,
+          "n_muestras": 7389,
+          "accuracy": 0.9487075382325078,
+          "precision": 0.9115107913669065,
+          "recall": 0.9501312335958005,
+          "f1": 0.9304204149072884,
+          "especificidad": 0.9479034307496823,
+          "balanced_accuracy": 0.9490173321727414,
+          "roc_auc": 0.9905804341166375,
+          "pr_auc": 0.9873274313950211,
+          "matriz_confusion": {
+            "vn": 4476,
+            "fp": 246,
+            "fn": 133,
+            "vp": 2534
+          },
+          "matriz_confusion_lista": [
+            [
+              4476,
+              246
+            ],
+            [
+              133,
+              2534
+            ]
+          ],
+          "tasa_falsos_negativos": 0.049868766404199474,
+          "tasa_falsos_positivos": 0.052096569250317665
+        },
+        "umbral_elegido": 0.18217700719833374
+      },
+      "MobileNetV2 + TTA8 maximo": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 7389,
+          "accuracy": 0.9637298687237786,
+          "precision": 0.9761810242159588,
+          "recall": 0.9220097487814023,
+          "f1": 0.9483224064789819,
+          "especificidad": 0.9872935196950444,
+          "balanced_accuracy": 0.9546516342382234,
+          "roc_auc": 0.9904837975303913,
+          "pr_auc": 0.9872667701988352,
+          "matriz_confusion": {
+            "vn": 4662,
+            "fp": 60,
+            "fn": 208,
+            "vp": 2459
+          },
+          "matriz_confusion_lista": [
+            [
+              4662,
+              60
+            ],
+            [
+              208,
+              2459
+            ]
+          ],
+          "tasa_falsos_negativos": 0.07799025121859768,
+          "tasa_falsos_positivos": 0.012706480304955527
+        },
+        "umbral_calibrado": {
+          "umbral": 0.29882147908210754,
+          "n_muestras": 7389,
+          "accuracy": 0.9503315739612939,
+          "precision": 0.9154624277456648,
+          "recall": 0.9501312335958005,
+          "f1": 0.9324747010119595,
+          "especificidad": 0.9504447268106735,
+          "balanced_accuracy": 0.950287980203237,
+          "roc_auc": 0.9904837975303913,
+          "pr_auc": 0.9872667701988352,
+          "matriz_confusion": {
+            "vn": 4488,
+            "fp": 234,
+            "fn": 133,
+            "vp": 2534
+          },
+          "matriz_confusion_lista": [
+            [
+              4488,
+              234
+            ],
+            [
+              133,
+              2534
+            ]
+          ],
+          "tasa_falsos_negativos": 0.049868766404199474,
+          "tasa_falsos_positivos": 0.04955527318932656
+        },
+        "umbral_elegido": 0.29882147908210754
+      },
+      "Ensemble + TTA8 media": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 7389,
+          "accuracy": 0.9549330085261876,
+          "precision": 0.9924050632911392,
+          "recall": 0.8818897637795275,
+          "f1": 0.9338892197736748,
+          "especificidad": 0.9961880559085133,
+          "balanced_accuracy": 0.9390389098440204,
+          "roc_auc": 0.9891142895575156,
+          "pr_auc": 0.9851355607986086,
+          "matriz_confusion": {
+            "vn": 4704,
+            "fp": 18,
+            "fn": 315,
+            "vp": 2352
+          },
+          "matriz_confusion_lista": [
+            [
+              4704,
+              18
+            ],
+            [
+              315,
+              2352
+            ]
+          ],
+          "tasa_falsos_negativos": 0.11811023622047244,
+          "tasa_falsos_positivos": 0.0038119440914866584
+        },
+        "umbral_calibrado": {
+          "umbral": 0.1850861757993698,
+          "n_muestras": 7389,
+          "accuracy": 0.9370686155095412,
+          "precision": 0.8841591067690161,
+          "recall": 0.9501312335958005,
+          "f1": 0.9159587926983553,
+          "especificidad": 0.929690808979246,
+          "balanced_accuracy": 0.9399110212875232,
+          "roc_auc": 0.9891142895575156,
+          "pr_auc": 0.9851355607986086,
+          "matriz_confusion": {
+            "vn": 4390,
+            "fp": 332,
+            "fn": 133,
+            "vp": 2534
+          },
+          "matriz_confusion_lista": [
+            [
+              4390,
+              332
+            ],
+            [
+              133,
+              2534
+            ]
+          ],
+          "tasa_falsos_negativos": 0.049868766404199474,
+          "tasa_falsos_positivos": 0.07030919102075392
+        },
+        "umbral_elegido": 0.1850861757993698
+      },
+      "Ensemble + TTA8 maximo": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 7389,
+          "accuracy": 0.9501962376505616,
+          "precision": 0.9326307866014302,
+          "recall": 0.9291338582677166,
+          "f1": 0.9308790383170549,
+          "especificidad": 0.9620923337568826,
+          "balanced_accuracy": 0.9456130960122996,
+          "roc_auc": 0.9878619445123362,
+          "pr_auc": 0.9835069400606228,
+          "matriz_confusion": {
+            "vn": 4543,
+            "fp": 179,
+            "fn": 189,
+            "vp": 2478
+          },
+          "matriz_confusion_lista": [
+            [
+              4543,
+              179
+            ],
+            [
+              189,
+              2478
+            ]
+          ],
+          "tasa_falsos_negativos": 0.07086614173228346,
+          "tasa_falsos_positivos": 0.037907666243117324
+        },
+        "umbral_calibrado": {
+          "umbral": 0.33120185136795044,
+          "n_muestras": 7389,
+          "accuracy": 0.9267830558938963,
+          "precision": 0.8613188307273963,
+          "recall": 0.9501312335958005,
+          "f1": 0.9035478694954537,
+          "especificidad": 0.9135959339263025,
+          "balanced_accuracy": 0.9318635837610515,
+          "roc_auc": 0.9878619445123362,
+          "pr_auc": 0.9835069400606228,
+          "matriz_confusion": {
+            "vn": 4314,
+            "fp": 408,
+            "fn": 133,
+            "vp": 2534
+          },
+          "matriz_confusion_lista": [
+            [
+              4314,
+              408
+            ],
+            [
+              133,
+              2534
+            ]
+          ],
+          "tasa_falsos_negativos": 0.049868766404199474,
+          "tasa_falsos_positivos": 0.08640406607369759
+        },
+        "umbral_elegido": 0.33120185136795044
+      }
+    },
+    "propias": {
+      "Linea base": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 40,
+          "accuracy": 0.8,
+          "precision": 1.0,
+          "recall": 0.6,
+          "f1": 0.75,
+          "especificidad": 1.0,
+          "balanced_accuracy": 0.8,
+          "roc_auc": 0.9099999999999999,
+          "pr_auc": 0.9293181483119564,
+          "matriz_confusion": {
+            "vn": 20,
+            "fp": 0,
+            "fn": 8,
+            "vp": 12
+          },
+          "matriz_confusion_lista": [
+            [
+              20,
+              0
+            ],
+            [
+              8,
+              12
+            ]
+          ],
+          "tasa_falsos_negativos": 0.4,
+          "tasa_falsos_positivos": 0.0
+        },
+        "umbral_calibrado_en_test": {
+          "umbral": 0.1539115607738495,
+          "n_muestras": 40,
+          "accuracy": 0.825,
+          "precision": 0.9333333333333333,
+          "recall": 0.7,
+          "f1": 0.8,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.825,
+          "roc_auc": 0.9099999999999999,
+          "pr_auc": 0.9293181483119564,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 6,
+            "vp": 14
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              6,
+              14
+            ]
+          ],
+          "tasa_falsos_negativos": 0.3,
+          "tasa_falsos_positivos": 0.05
+        },
+        "oraculo_en_propias": {
+          "umbral": 0.0878097265958786,
+          "n_muestras": 40,
+          "accuracy": 0.85,
+          "precision": 0.85,
+          "recall": 0.85,
+          "f1": 0.85,
+          "especificidad": 0.85,
+          "balanced_accuracy": 0.85,
+          "roc_auc": 0.9099999999999999,
+          "pr_auc": 0.9293181483119564,
+          "matriz_confusion": {
+            "vn": 17,
+            "fp": 3,
+            "fn": 3,
+            "vp": 17
+          },
+          "matriz_confusion_lista": [
+            [
+              17,
+              3
+            ],
+            [
+              3,
+              17
+            ]
+          ],
+          "tasa_falsos_negativos": 0.15,
+          "tasa_falsos_positivos": 0.15
+        }
+      },
+      "MobileNetV2": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 40,
+          "accuracy": 0.75,
+          "precision": 1.0,
+          "recall": 0.5,
+          "f1": 0.6666666666666666,
+          "especificidad": 1.0,
+          "balanced_accuracy": 0.75,
+          "roc_auc": 0.8400000000000001,
+          "pr_auc": 0.892419871794872,
+          "matriz_confusion": {
+            "vn": 20,
+            "fp": 0,
+            "fn": 10,
+            "vp": 10
+          },
+          "matriz_confusion_lista": [
+            [
+              20,
+              0
+            ],
+            [
+              10,
+              10
+            ]
+          ],
+          "tasa_falsos_negativos": 0.5,
+          "tasa_falsos_positivos": 0.0
+        },
+        "umbral_calibrado_en_test": {
+          "umbral": 0.185275137424469,
+          "n_muestras": 40,
+          "accuracy": 0.75,
+          "precision": 0.9166666666666666,
+          "recall": 0.55,
+          "f1": 0.6875,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.75,
+          "roc_auc": 0.8400000000000001,
+          "pr_auc": 0.892419871794872,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 9,
+            "vp": 11
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              9,
+              11
+            ]
+          ],
+          "tasa_falsos_negativos": 0.45,
+          "tasa_falsos_positivos": 0.05
+        },
+        "oraculo_en_propias": {
+          "umbral": 0.08193278312683105,
+          "n_muestras": 40,
+          "accuracy": 0.85,
+          "precision": 0.9375,
+          "recall": 0.75,
+          "f1": 0.8333333333333334,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.85,
+          "roc_auc": 0.8400000000000001,
+          "pr_auc": 0.892419871794872,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 5,
+            "vp": 15
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              5,
+              15
+            ]
+          ],
+          "tasa_falsos_negativos": 0.25,
+          "tasa_falsos_positivos": 0.05
+        }
+      },
+      "Ensemble (media)": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 40,
+          "accuracy": 0.85,
+          "precision": 1.0,
+          "recall": 0.7,
+          "f1": 0.8235294117647058,
+          "especificidad": 1.0,
+          "balanced_accuracy": 0.85,
+          "roc_auc": 0.9550000000000001,
+          "pr_auc": 0.9584967627401838,
+          "matriz_confusion": {
+            "vn": 20,
+            "fp": 0,
+            "fn": 6,
+            "vp": 14
+          },
+          "matriz_confusion_lista": [
+            [
+              20,
+              0
+            ],
+            [
+              6,
+              14
+            ]
+          ],
+          "tasa_falsos_negativos": 0.3,
+          "tasa_falsos_positivos": 0.0
+        },
+        "umbral_calibrado_en_test": {
+          "umbral": 0.17925167083740234,
+          "n_muestras": 40,
+          "accuracy": 0.825,
+          "precision": 0.9333333333333333,
+          "recall": 0.7,
+          "f1": 0.8,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.825,
+          "roc_auc": 0.9550000000000001,
+          "pr_auc": 0.9584967627401838,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 6,
+            "vp": 14
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              6,
+              14
+            ]
+          ],
+          "tasa_falsos_negativos": 0.3,
+          "tasa_falsos_positivos": 0.05
+        },
+        "oraculo_en_propias": {
+          "umbral": 0.05842703953385353,
+          "n_muestras": 40,
+          "accuracy": 0.875,
+          "precision": 0.8,
+          "recall": 1.0,
+          "f1": 0.8888888888888888,
+          "especificidad": 0.75,
+          "balanced_accuracy": 0.875,
+          "roc_auc": 0.9550000000000001,
+          "pr_auc": 0.9584967627401838,
+          "matriz_confusion": {
+            "vn": 15,
+            "fp": 5,
+            "fn": 0,
+            "vp": 20
+          },
+          "matriz_confusion_lista": [
+            [
+              15,
+              5
+            ],
+            [
+              0,
+              20
+            ]
+          ],
+          "tasa_falsos_negativos": 0.0,
+          "tasa_falsos_positivos": 0.25
+        }
+      },
+      "MobileNetV2 + TTA4 media": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 40,
+          "accuracy": 0.775,
+          "precision": 1.0,
+          "recall": 0.55,
+          "f1": 0.7096774193548387,
+          "especificidad": 1.0,
+          "balanced_accuracy": 0.775,
+          "roc_auc": 0.8475000000000001,
+          "pr_auc": 0.8986400484891864,
+          "matriz_confusion": {
+            "vn": 20,
+            "fp": 0,
+            "fn": 9,
+            "vp": 11
+          },
+          "matriz_confusion_lista": [
+            [
+              20,
+              0
+            ],
+            [
+              9,
+              11
+            ]
+          ],
+          "tasa_falsos_negativos": 0.45,
+          "tasa_falsos_positivos": 0.0
+        },
+        "umbral_calibrado_en_test": {
+          "umbral": 0.1854596585035324,
+          "n_muestras": 40,
+          "accuracy": 0.775,
+          "precision": 0.9230769230769231,
+          "recall": 0.6,
+          "f1": 0.7272727272727273,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.7749999999999999,
+          "roc_auc": 0.8475000000000001,
+          "pr_auc": 0.8986400484891864,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 8,
+            "vp": 12
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              8,
+              12
+            ]
+          ],
+          "tasa_falsos_negativos": 0.4,
+          "tasa_falsos_positivos": 0.05
+        },
+        "oraculo_en_propias": {
+          "umbral": 0.06000599265098572,
+          "n_muestras": 40,
+          "accuracy": 0.875,
+          "precision": 0.9411764705882353,
+          "recall": 0.8,
+          "f1": 0.8648648648648649,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.875,
+          "roc_auc": 0.8475000000000001,
+          "pr_auc": 0.8986400484891864,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 4,
+            "vp": 16
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              4,
+              16
+            ]
+          ],
+          "tasa_falsos_negativos": 0.2,
+          "tasa_falsos_positivos": 0.05
+        }
+      },
+      "MobileNetV2 + TTA4 maximo": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 40,
+          "accuracy": 0.75,
+          "precision": 0.9166666666666666,
+          "recall": 0.55,
+          "f1": 0.6875,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.75,
+          "roc_auc": 0.855,
+          "pr_auc": 0.9012037411118294,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 9,
+            "vp": 11
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              9,
+              11
+            ]
+          ],
+          "tasa_falsos_negativos": 0.45,
+          "tasa_falsos_positivos": 0.05
+        },
+        "umbral_calibrado_en_test": {
+          "umbral": 0.2559327781200409,
+          "n_muestras": 40,
+          "accuracy": 0.775,
+          "precision": 0.9230769230769231,
+          "recall": 0.6,
+          "f1": 0.7272727272727273,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.7749999999999999,
+          "roc_auc": 0.855,
+          "pr_auc": 0.9012037411118294,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 8,
+            "vp": 12
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              8,
+              12
+            ]
+          ],
+          "tasa_falsos_negativos": 0.4,
+          "tasa_falsos_positivos": 0.05
+        },
+        "oraculo_en_propias": {
+          "umbral": 0.07999101281166077,
+          "n_muestras": 40,
+          "accuracy": 0.875,
+          "precision": 0.9411764705882353,
+          "recall": 0.8,
+          "f1": 0.8648648648648649,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.875,
+          "roc_auc": 0.855,
+          "pr_auc": 0.9012037411118294,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 4,
+            "vp": 16
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              4,
+              16
+            ]
+          ],
+          "tasa_falsos_negativos": 0.2,
+          "tasa_falsos_positivos": 0.05
+        }
+      },
+      "MobileNetV2 + TTA8 media": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 40,
+          "accuracy": 0.775,
+          "precision": 1.0,
+          "recall": 0.55,
+          "f1": 0.7096774193548387,
+          "especificidad": 1.0,
+          "balanced_accuracy": 0.775,
+          "roc_auc": 0.865,
+          "pr_auc": 0.9159614422811684,
+          "matriz_confusion": {
+            "vn": 20,
+            "fp": 0,
+            "fn": 9,
+            "vp": 11
+          },
+          "matriz_confusion_lista": [
+            [
+              20,
+              0
+            ],
+            [
+              9,
+              11
+            ]
+          ],
+          "tasa_falsos_negativos": 0.45,
+          "tasa_falsos_positivos": 0.0
+        },
+        "umbral_calibrado_en_test": {
+          "umbral": 0.18217700719833374,
+          "n_muestras": 40,
+          "accuracy": 0.775,
+          "precision": 1.0,
+          "recall": 0.55,
+          "f1": 0.7096774193548387,
+          "especificidad": 1.0,
+          "balanced_accuracy": 0.775,
+          "roc_auc": 0.865,
+          "pr_auc": 0.9159614422811684,
+          "matriz_confusion": {
+            "vn": 20,
+            "fp": 0,
+            "fn": 9,
+            "vp": 11
+          },
+          "matriz_confusion_lista": [
+            [
+              20,
+              0
+            ],
+            [
+              9,
+              11
+            ]
+          ],
+          "tasa_falsos_negativos": 0.45,
+          "tasa_falsos_positivos": 0.0
+        },
+        "oraculo_en_propias": {
+          "umbral": 0.07054123282432556,
+          "n_muestras": 40,
+          "accuracy": 0.9,
+          "precision": 0.9444444444444444,
+          "recall": 0.85,
+          "f1": 0.8947368421052632,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.8999999999999999,
+          "roc_auc": 0.865,
+          "pr_auc": 0.9159614422811684,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 3,
+            "vp": 17
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              3,
+              17
+            ]
+          ],
+          "tasa_falsos_negativos": 0.15,
+          "tasa_falsos_positivos": 0.05
+        }
+      },
+      "MobileNetV2 + TTA8 maximo": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 40,
+          "accuracy": 0.75,
+          "precision": 0.9166666666666666,
+          "recall": 0.55,
+          "f1": 0.6875,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.75,
+          "roc_auc": 0.865,
+          "pr_auc": 0.9125479871435755,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 9,
+            "vp": 11
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              9,
+              11
+            ]
+          ],
+          "tasa_falsos_negativos": 0.45,
+          "tasa_falsos_positivos": 0.05
+        },
+        "umbral_calibrado_en_test": {
+          "umbral": 0.29882147908210754,
+          "n_muestras": 40,
+          "accuracy": 0.775,
+          "precision": 0.9230769230769231,
+          "recall": 0.6,
+          "f1": 0.7272727272727273,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.7749999999999999,
+          "roc_auc": 0.865,
+          "pr_auc": 0.9125479871435755,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 8,
+            "vp": 12
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              8,
+              12
+            ]
+          ],
+          "tasa_falsos_negativos": 0.4,
+          "tasa_falsos_positivos": 0.05
+        },
+        "oraculo_en_propias": {
+          "umbral": 0.16344726085662842,
+          "n_muestras": 40,
+          "accuracy": 0.9,
+          "precision": 0.9444444444444444,
+          "recall": 0.85,
+          "f1": 0.8947368421052632,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.8999999999999999,
+          "roc_auc": 0.865,
+          "pr_auc": 0.9125479871435755,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 3,
+            "vp": 17
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              3,
+              17
+            ]
+          ],
+          "tasa_falsos_negativos": 0.15,
+          "tasa_falsos_positivos": 0.05
+        }
+      },
+      "Ensemble + TTA8 media": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 40,
+          "accuracy": 0.825,
+          "precision": 1.0,
+          "recall": 0.65,
+          "f1": 0.7878787878787878,
+          "especificidad": 1.0,
+          "balanced_accuracy": 0.825,
+          "roc_auc": 0.9624999999999999,
+          "pr_auc": 0.9662961651351745,
+          "matriz_confusion": {
+            "vn": 20,
+            "fp": 0,
+            "fn": 7,
+            "vp": 13
+          },
+          "matriz_confusion_lista": [
+            [
+              20,
+              0
+            ],
+            [
+              7,
+              13
+            ]
+          ],
+          "tasa_falsos_negativos": 0.35,
+          "tasa_falsos_positivos": 0.0
+        },
+        "umbral_calibrado_en_test": {
+          "umbral": 0.1850861757993698,
+          "n_muestras": 40,
+          "accuracy": 0.875,
+          "precision": 1.0,
+          "recall": 0.75,
+          "f1": 0.8571428571428571,
+          "especificidad": 1.0,
+          "balanced_accuracy": 0.875,
+          "roc_auc": 0.9624999999999999,
+          "pr_auc": 0.9662961651351745,
+          "matriz_confusion": {
+            "vn": 20,
+            "fp": 0,
+            "fn": 5,
+            "vp": 15
+          },
+          "matriz_confusion_lista": [
+            [
+              20,
+              0
+            ],
+            [
+              5,
+              15
+            ]
+          ],
+          "tasa_falsos_negativos": 0.25,
+          "tasa_falsos_positivos": 0.0
+        },
+        "oraculo_en_propias": {
+          "umbral": 0.06734368950128555,
+          "n_muestras": 40,
+          "accuracy": 0.9,
+          "precision": 0.8636363636363636,
+          "recall": 0.95,
+          "f1": 0.9047619047619048,
+          "especificidad": 0.85,
+          "balanced_accuracy": 0.8999999999999999,
+          "roc_auc": 0.9624999999999999,
+          "pr_auc": 0.9662961651351745,
+          "matriz_confusion": {
+            "vn": 17,
+            "fp": 3,
+            "fn": 1,
+            "vp": 19
+          },
+          "matriz_confusion_lista": [
+            [
+              17,
+              3
+            ],
+            [
+              1,
+              19
+            ]
+          ],
+          "tasa_falsos_negativos": 0.05,
+          "tasa_falsos_positivos": 0.15
+        }
+      },
+      "Ensemble + TTA8 maximo": {
+        "umbral_defecto": {
+          "umbral": 0.5,
+          "n_muestras": 40,
+          "accuracy": 0.825,
+          "precision": 0.9333333333333333,
+          "recall": 0.7,
+          "f1": 0.8,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.825,
+          "roc_auc": 0.975,
+          "pr_auc": 0.9760244668042656,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 6,
+            "vp": 14
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              6,
+              14
+            ]
+          ],
+          "tasa_falsos_negativos": 0.3,
+          "tasa_falsos_positivos": 0.05
+        },
+        "umbral_calibrado_en_test": {
+          "umbral": 0.33120185136795044,
+          "n_muestras": 40,
+          "accuracy": 0.85,
+          "precision": 0.9375,
+          "recall": 0.75,
+          "f1": 0.8333333333333334,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.85,
+          "roc_auc": 0.975,
+          "pr_auc": 0.9760244668042656,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 5,
+            "vp": 15
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              5,
+              15
+            ]
+          ],
+          "tasa_falsos_negativos": 0.25,
+          "tasa_falsos_positivos": 0.05
+        },
+        "oraculo_en_propias": {
+          "umbral": 0.16344726085662842,
+          "n_muestras": 40,
+          "accuracy": 0.95,
+          "precision": 0.95,
+          "recall": 0.95,
+          "f1": 0.95,
+          "especificidad": 0.95,
+          "balanced_accuracy": 0.95,
+          "roc_auc": 0.975,
+          "pr_auc": 0.9760244668042656,
+          "matriz_confusion": {
+            "vn": 19,
+            "fp": 1,
+            "fn": 1,
+            "vp": 19
+          },
+          "matriz_confusion_lista": [
+            [
+              19,
+              1
+            ],
+            [
+              1,
+              19
+            ]
+          ],
+          "tasa_falsos_negativos": 0.05,
+          "tasa_falsos_positivos": 0.05
+        }
+      }
+    }
+  },
+  "costo": {
+    "MobileNetV2": {
+      "latencia_media_ms": 187.12,
+      "latencia_std_ms": 25.13,
+      "pasadas": 1
+    },
+    "MobileNetV2 + TTA4": {
+      "latencia_media_ms": 692.32,
+      "latencia_std_ms": 73.05,
+      "pasadas": 4
+    },
+    "MobileNetV2 + TTA8": {
+      "latencia_media_ms": 1328.44,
+      "latencia_std_ms": 28.61,
+      "pasadas": 8
+    },
+    "Ensemble": {
+      "latencia_media_ms": 183.23,
+      "latencia_std_ms": 1.8,
+      "pasadas": 2
+    },
+    "Ensemble + TTA8": {
+      "latencia_media_ms": 1503.16,
+      "latencia_std_ms": 96.9,
+      "pasadas": 16
+    }
+  }
+}
