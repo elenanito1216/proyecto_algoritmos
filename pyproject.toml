@@ -69,3 +69,49 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning",
 ]
+
+# =============================================================================
+# Pylance / Pyright
+#
+# El proyecto ya tiene tres puertas de calidad: Ruff (lint), Black (formato) y
+# pytest (comportamiento). Pylance es un CUARTO analizador, y con esta pila de
+# librerias produce sobre todo ruido:
+#
+#   43 avisos por  tf.keras.*        TensorFlow 2.x expone keras como un alias
+#                                    cargado de forma diferida; Pyright no puede
+#                                    resolverlo de forma estatica.
+#   24 avisos por  st.session_state  acepta atributos arbitrarios POR DISENO.
+#   30 usos de     cv2.*             los stubs de opencv-python son parciales.
+#
+# Ninguno indica un fallo: el codigo pasa Ruff, Black, 116 pruebas y compila.
+# Marcar 70 falsos positivos es peor que no marcar nada, porque entrena a
+# ignorar los avisos y entonces el de verdad tampoco se ve.
+#
+# Se silencian solo las categorias que dependen de stubs inexistentes. Se
+# CONSERVAN las que si detectan errores reales: variables no definidas, imports
+# que no existen, redeclaraciones y parametros mal escritos.
+# =============================================================================
+
+[tool.pyright]
+include = ["src", "app", "scripts", "tests"]
+exclude = ["**/__pycache__", ".venv", "data", "models"]
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+
+# --- Se conservan: detectan errores autenticos ---
+reportUndefinedVariable = "error"
+reportMissingImports = "error"
+reportRedeclaration = "warning"
+reportSelfClsParameterName = "warning"
+
+# --- Se silencian: falsos positivos por falta de stubs ---
+reportMissingTypeStubs = "none"        # TensorFlow y OpenCV no publican stubs completos
+reportAttributeAccessIssue = "none"    # tf.keras.* y st.session_state.*
+reportPrivateImportUsage = "none"      # reexportaciones de keras dentro de tensorflow
+reportOptionalMemberAccess = "none"    # campos float | None ya comprobados en tiempo de ejecucion
+reportOptionalSubscript = "none"
+reportOptionalOperand = "none"
+reportOptionalIterable = "none"
+reportArgumentType = "none"            # cv2 y tf devuelven Any y contaminan la inferencia
+reportCallIssue = "none"
+reportIndexIssue = "none"

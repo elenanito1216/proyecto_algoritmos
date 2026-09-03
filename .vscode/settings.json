@@ -13,9 +13,14 @@
   "python.terminal.activateEnvInCurrentTerminal": true,
 
   // --- Analisis estatico ----------------------------------------------------
-  "python.analysis.typeCheckingMode": "basic",
+  // El modo y las reglas de Pylance se definen en pyproject.toml, seccion
+  // [tool.pyright]: asi quedan versionadas y valen para todo el equipo, no solo
+  // para quien tenga estos ajustes de VS Code. No se repite aqui
+  // typeCheckingMode para que no haya dos fuentes de verdad en conflicto.
   "python.analysis.autoImportCompletions": true,
   "python.analysis.extraPaths": ["${workspaceFolder}"],
+  // Los avisos de Pylance se muestran, pero el linter con autoridad es Ruff.
+  "python.analysis.diagnosticMode": "openFilesOnly",
 
   // --- Formateo al guardar con Black ---------------------------------------
   "[python]": {

@@ -16,6 +16,7 @@ muestra.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import sys
 import time
@@ -36,6 +37,17 @@ from src.models.inferencia import Predictor, cargar_predictor  # noqa: E402
 from src.risk.reglas import evaluar_riesgo  # noqa: E402
 from src.utils.config import cargar_config, obtener  # noqa: E402
 from src.utils.rutas import resolver  # noqa: E402
+from src.vision.camara import (  # noqa: E402
+    LectorAsincrono,
+    MedidorFPS,
+    SuavizadorTemporal,
+    abrir_camara,
+    diagnosticar_fotograma,
+    listar_camaras,
+    normalizar_url_celular,
+    recortar_centro,
+    rectangulo_centro,
+)
 from src.vision.inclinacion import (  # noqa: E402
     anotar_imagen,
     clasificar_orientacion_grieta,
@@ -1260,6 +1272,596 @@ potencialmente graves. El análisis completo está en `reports/analisis.md`.
 
 
 # --------------------------------------------------------------------------- #
+# Pestana 4: camara en vivo
+# --------------------------------------------------------------------------- #
+
+
+@st.cache_data(show_spinner="Buscando camaras...", ttl=300)
+def detectar_camaras(max_indice: int) -> list[int]:
+    """Sondea que camaras hay conectadas, cacheando el resultado.
+
+    El sondeo abre y cierra cada dispositivo, lo que tarda entre medio segundo y
+    varios segundos. Sin cache se repetiria en cada rerun de Streamlit y la
+    interfaz seria inusable. El TTL de 5 minutos permite detectar una camara
+    conectada despues de arrancar la aplicacion.
+
+    Args:
+        max_indice: Ultimo indice a probar (exclusivo).
+
+    Returns:
+        Lista de indices disponibles.
+    """
+    return listar_camaras(max_indice)
+
+
+@st.cache_resource(show_spinner=False)
+def obtener_captura(fuente: int | str, ancho: int, alto: int) -> Any:
+    """Abre la camara una sola vez y la mantiene entre reruns.
+
+    Es ``cache_resource`` y no ``cache_data`` a proposito: el objeto de captura
+    no es serializable y, sobre todo, **debe sobrevivir a los reruns**. Abrir y
+    cerrar el dispositivo en cada fotograma costaria entre 200 y 500 ms, mas que
+    todo el pipeline de analisis junto.
+
+    Args:
+        fuente: Indice del dispositivo local o URL del stream del celular.
+        ancho: Ancho de captura solicitado.
+        alto: Alto de captura solicitado.
+
+    Returns:
+        Objeto ``cv2.VideoCapture``, abierto o no.
+    """
+    captura = abrir_camara(fuente, ancho, alto)
+    if not captura.isOpened():
+        return captura
+    # Se envuelve en el hilo lector: sin el, los fotogramas se acumulan en el
+    # bufer de la fuente y el retardo entre mover la camara y verlo en pantalla
+    # crece sin limite.
+    return LectorAsincrono(captura)
+
+
+def liberar_camara() -> None:
+    """Cierra la camara y limpia la cache del recurso.
+
+    Necesario porque ``cache_resource`` mantendria el dispositivo abierto -y el
+    piloto de la webcam encendido- aunque el usuario detenga el analisis.
+    """
+    # Parar el hilo lector ANTES de limpiar la cache: si solo se limpiara la
+    # cache, el hilo seguiria vivo leyendo y reteniendo el dispositivo.
+    lector = st.session_state.pop("lector_activo", None)
+    if lector is not None:
+        with contextlib.suppress(Exception):
+            lector.detener()
+    with contextlib.suppress(Exception):
+        obtener_captura.clear()
+
+
+def _suavizadores(ventana: int) -> tuple[SuavizadorTemporal, SuavizadorTemporal]:
+    """Devuelve los suavizadores de la sesion, recreandolos si cambio la ventana.
+
+    Args:
+        ventana: Tamano de ventana solicitado en la interfaz.
+
+    Returns:
+        Tupla ``(suavizador_probabilidad, suavizador_angulo)``.
+    """
+    if st.session_state.get("ventana_suavizado") != ventana:
+        st.session_state.ventana_suavizado = ventana
+        st.session_state.suave_prob = SuavizadorTemporal(ventana)
+        st.session_state.suave_angulo = SuavizadorTemporal(ventana)
+    return st.session_state.suave_prob, st.session_state.suave_angulo
+
+
+def procesar_fotograma(
+    fotograma_bgr: np.ndarray,
+    predictor: Predictor,
+    config: dict[str, Any],
+    controles: dict[str, Any],
+    fraccion: float,
+) -> dict[str, Any]:
+    """Analiza un fotograma y devuelve el resultado sin suavizar.
+
+    Reparto deliberado del encuadre, que sale del hallazgo de §3.6 del informe:
+    los dos modulos necesitan vistas distintas.
+
+    - La **clasificacion** usa el recorte central, porque el modelo se entreno
+      con parches en primer plano y una webcam da una vista amplia.
+    - La **inclinometria** usa el fotograma completo, porque necesita ver el
+      elemento vertical entero para encontrar su arista.
+
+    Args:
+        fotograma_bgr: Fotograma capturado, en BGR.
+        predictor: Predictor activo.
+        config: Configuracion del proyecto.
+        controles: Estado de los controles de OpenCV de la barra lateral.
+        fraccion: Fraccion del recorte central para clasificar.
+
+    Returns:
+        Diccionario con ``probabilidad``, ``ms_inferencia``, ``inclinacion`` y
+        ``anotada_rgb`` (el fotograma con las lineas y el recuadro dibujados).
+    """
+    recorte_bgr = recortar_centro(fotograma_bgr, fraccion)
+    recorte_rgb = cv2.cvtColor(recorte_bgr, cv2.COLOR_BGR2RGB)
+    probabilidad, ms = predictor.predecir_imagen(recorte_rgb, config)
+
+    inclinacion = estimar_inclinacion(
+        fotograma_bgr,
+        config,
+        canny_bajo=controles["canny_bajo"],
+        canny_alto=controles["canny_alto"],
+        min_longitud=controles["min_longitud"],
+        max_separacion=controles["max_separacion"],
+        umbral_hough=controles["umbral_hough"],
+    )
+
+    anotada = anotar_imagen(
+        fotograma_bgr, inclinacion, dibujar_descartadas=controles["mostrar_descartadas"]
+    )
+    x0, y0, x1, y1 = rectangulo_centro(fotograma_bgr, fraccion)
+    cv2.rectangle(anotada, (x0, y0), (x1, y1), (255, 200, 0), 2)
+    cv2.putText(
+        anotada,
+        "zona analizada",
+        (x0 + 4, max(y0 - 6, 12)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 200, 0),
+        1,
+        cv2.LINE_AA,
+    )
+
+    return {
+        "probabilidad": probabilidad,
+        "ms_inferencia": ms,
+        "inclinacion": inclinacion,
+        "recorte_bgr": recorte_bgr,
+        "anotada_rgb": cv2.cvtColor(anotada, cv2.COLOR_BGR2RGB),
+    }
+
+
+def _tarjetas_vivo(
+    prob: float | None,
+    angulo: float | None,
+    inclinacion: Any,
+    fps: float,
+    ms: float,
+    umbral: float,
+    estabilidad: float,
+    edad_ms: float,
+) -> str:
+    """Construye el HTML de las tarjetas del modo video.
+
+    Args:
+        prob: Probabilidad de grieta suavizada.
+        angulo: Desaplome suavizado, o ``None``.
+        inclinacion: Resultado de inclinometria del ultimo fotograma.
+        fps: Tasa de fotogramas medida.
+        ms: Milisegundos de inferencia del ultimo fotograma.
+        umbral: Umbral de decision.
+        estabilidad: Dispersion temporal de la probabilidad.
+        edad_ms: Antiguedad del fotograma mostrado, en milisegundos.
+
+    Returns:
+        Fragmento HTML con cuatro tarjetas.
+    """
+    texto_prob = f"{prob:.1%}" if prob is not None else "—"
+    nota_prob = (
+        f"{'Grieta detectada' if (prob or 0) >= umbral else 'Sin grieta'} · "
+        f"estabilidad ±{estabilidad:.3f}"
+    )
+    if angulo is not None and inclinacion.fiable:
+        texto_ang, nota_ang = f"{angulo:+.2f}", f"{inclinacion.confianza} lineas coherentes"
+    elif inclinacion.motivo_rechazo:
+        texto_ang, nota_ang = "—", "Descartado por inverosimil"
+    else:
+        texto_ang, nota_ang = "—", "Sin elemento vertical"
+
+    return (
+        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.8rem">'
+        + estilos.tarjeta_metrica("P(grieta) suavizada", texto_prob, nota=nota_prob)
+        + estilos.tarjeta_metrica("Desaplome", texto_ang, "°", nota_ang)
+        + estilos.tarjeta_metrica(
+            "Fotogramas", f"{fps:.1f}", "FPS", f"Retardo del ultimo: {edad_ms:.0f} ms"
+        )
+        + estilos.tarjeta_metrica("Inferencia", f"{ms:.1f}", "ms", "Ultimo fotograma")
+        + "</div>"
+    )
+
+
+def pestana_camara(
+    config: dict[str, Any], controles: dict[str, Any], predictor: Predictor | None
+) -> None:
+    """Renderiza la pestana de analisis con camara en vivo.
+
+    Args:
+        config: Configuracion del proyecto.
+        controles: Estado de los controles de la barra lateral.
+        predictor: Predictor activo, o ``None`` si no hay modelo.
+    """
+    cfg = obtener(config, "app.camara", {}) or {}
+    st.markdown(estilos.aviso_legal(obtener(config, "app.aviso_legal", "")), unsafe_allow_html=True)
+
+    if predictor is None:
+        st.info("Entrena un modelo para habilitar el analisis en vivo.")
+        return
+
+    modo = st.radio(
+        "Modo de captura",
+        ["video", "foto"],
+        horizontal=True,
+        format_func=lambda v: (
+            "🎥 Vídeo continuo" if v == "video" else "📸 Foto a foto (navegador)"
+        ),
+        help=(
+            "**Vídeo continuo** lee la webcam desde el servidor con OpenCV: es la "
+            "demo en tiempo real, y funciona en local.\n\n"
+            "**Foto a foto** usa la cámara del navegador y analiza una instantánea. "
+            "Más lento pero no depende de que OpenCV vea el dispositivo."
+        ),
+    )
+
+    if modo == "foto":
+        _modo_foto(config, controles, predictor)
+        return
+
+    _modo_video(config, controles, predictor, cfg)
+
+
+def _modo_foto(config: dict[str, Any], controles: dict[str, Any], predictor: Predictor) -> None:
+    """Modo de instantanea con la camara del navegador.
+
+    Es la red de seguridad para la sustentacion: no depende de que OpenCV pueda
+    abrir el dispositivo, solo de que el navegador tenga permiso de camara.
+
+    Args:
+        config: Configuracion del proyecto.
+        controles: Estado de los controles de la barra lateral.
+        predictor: Predictor activo.
+    """
+    captura = st.camera_input("Toma una foto del elemento")
+    if captura is None:
+        st.caption(
+            "El navegador pedirá permiso para usar la cámara. La imagen se procesa "
+            "en local y no se envía a ningún servidor externo."
+        )
+        return
+
+    imagen_rgb, error = leer_imagen_subida(captura, int(obtener(config, "app.max_mb_subida", 10)))
+    if imagen_rgb is None:
+        st.error(f"No se pudo procesar la captura. {error}")
+        return
+
+    with st.spinner("Analizando..."):
+        resultado = ejecutar_pipeline(imagen_rgb, predictor, config, controles)
+
+    st.markdown(
+        estilos.semaforo(resultado["evaluacion"].nivel, resultado["evaluacion"].resumen),
+        unsafe_allow_html=True,
+    )
+    izquierda, derecha = st.columns(2, gap="medium")
+    with izquierda:
+        st.image(resultado["imagen_vision"], use_column_width=True)
+    with derecha:
+        st.image(resultado["imagen_anotada"], use_column_width=True)
+
+    for regla in sorted(resultado["evaluacion"].reglas, key=lambda r: -r.severidad):
+        st.markdown(
+            estilos.regla(
+                regla.codigo, regla.titulo, regla.detalle, regla.justificacion, regla.severidad
+            ),
+            unsafe_allow_html=True,
+        )
+
+
+def _modo_video(
+    config: dict[str, Any],
+    controles: dict[str, Any],
+    predictor: Predictor,
+    cfg: dict[str, Any],
+) -> None:
+    """Modo de video continuo leyendo la webcam con OpenCV.
+
+    Args:
+        config: Configuracion del proyecto.
+        controles: Estado de los controles de la barra lateral.
+        predictor: Predictor activo.
+        cfg: Seccion ``app.camara`` de la configuracion.
+    """
+    recomendado = str(cfg.get("modelo_recomendado", "tflite"))
+    if predictor.formato != recomendado and recomendado == "tflite":
+        st.warning(
+            f"Estás usando **{predictor.formato}**, que tarda "
+            f"~{'190' if predictor.formato == 'ensemble' else '170'} ms por imagen: "
+            "el vídeo irá a unos 5 FPS. Para vídeo fluido cambia a **TFLite int8** "
+            "(4.9 ms) en la barra lateral. Es el compromiso real entre precisión y "
+            "velocidad que documenta el informe, y se ve aquí en directo."
+        )
+
+    # --- Seleccion de la fuente de video ------------------------------------
+    fuente_tipo = st.radio(
+        "Fuente de vídeo",
+        ["equipo", "celular"],
+        horizontal=True,
+        index=0 if str(cfg.get("fuente", "equipo")) == "equipo" else 1,
+        format_func=lambda v: (
+            "💻 Webcam del equipo" if v == "equipo" else "📱 Cámara del celular (por red)"
+        ),
+    )
+
+    if fuente_tipo == "celular":
+        with st.expander(
+            "Cómo conectar el celular", expanded=not st.session_state.get("url_celular")
+        ):
+            st.markdown(
+                """
+**1.** Instala en el celular una app de cámara IP:
+
+| App | Sistema | Puerto |
+|---|---|---|
+| **IP Webcam** | Android | 8080 |
+| **DroidCam** | Android / iOS | 4747 |
+
+**2.** Conecta el celular **a la misma red Wi-Fi** que este equipo.
+
+**3.** Abre la app y pulsa *Iniciar servidor*. Te mostrará una dirección
+del tipo `http://192.168.1.40:8080`.
+
+**4.** Cópiala abajo. Puedes pegar solo `192.168.1.40:8080`: se completa sola.
+
+La captura la hace el teléfono de forma nativa, así que **no hace falta HTTPS**
+ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
+                """
+            )
+
+        texto_url = st.text_input(
+            "Dirección del stream",
+            value=st.session_state.get("url_celular", str(cfg.get("url_celular", ""))),
+            placeholder="192.168.1.40:8080",
+            help="Se admite la forma abreviada; se completa a http://IP:puerto/video.",
+        )
+        url = normalizar_url_celular(texto_url)
+        st.session_state.url_celular = texto_url
+
+        if not url:
+            st.info("Escribe la dirección que muestra la app del celular para continuar.")
+            return
+        st.caption(f"Se conectará a `{url}`")
+        fuente: int | str = url
+    else:
+        # El sondeo de dispositivos se hace SOLO cuando el usuario lo pide: abrir
+        # cada indice enciende brevemente el piloto de la webcam, y hacerlo por el
+        # mero hecho de abrir la pestana seria una sorpresa desagradable.
+        if "camaras_detectadas" not in st.session_state:
+            st.info(
+                "Para empezar hay que localizar los dispositivos conectados. La búsqueda "
+                "abre y cierra cada cámara, así que verás su piloto encenderse un instante."
+            )
+            if st.button("🔎 Buscar cámaras"):
+                st.session_state.camaras_detectadas = detectar_camaras(3)
+                st.rerun()
+            return
+
+        camaras = st.session_state.camaras_detectadas
+        if not camaras:
+            st.error(
+                "**No se detectó ninguna cámara.** Comprueba que está conectada, que "
+                "ninguna otra aplicación la esté usando y que el sistema le da permiso.\n\n"
+                "Puedes usar el modo **Foto a foto**, o conectar la cámara del celular."
+            )
+            if st.button("🔄 Volver a buscar"):
+                del st.session_state["camaras_detectadas"]
+                detectar_camaras.clear()
+                st.rerun()
+            return
+
+        fuente = st.selectbox(
+            "Cámara",
+            camaras,
+            index=(
+                camaras.index(int(cfg.get("indice", 0)))
+                if int(cfg.get("indice", 0)) in camaras
+                else 0
+            ),
+            format_func=lambda i: f"Dispositivo {i}",
+        )
+    columna_a, columna_b = st.columns(2)
+    with columna_a:
+        fraccion = st.slider(
+            "Zona analizada",
+            0.2,
+            1.0,
+            float(cfg.get("fraccion_recorte", 0.6)),
+            0.05,
+            help=(
+                "Fracción central del fotograma que se pasa al clasificador. El "
+                "modelo se entrenó con primeros planos: sin recorte, una grieta "
+                "queda reducida a dos o tres píxeles."
+            ),
+        )
+        ventana = st.slider(
+            "Suavizado temporal",
+            1,
+            15,
+            int(cfg.get("ventana_suavizado", 7)),
+            help=(
+                "Fotogramas sobre los que se toma la mediana. Con 1 verás el "
+                "parpadeo que motiva esta función."
+            ),
+        )
+
+    activa = bool(st.session_state.get("camara_activa", False))
+    boton_izq, boton_der = st.columns(2)
+    with boton_izq:
+        if st.button("▶ Iniciar", use_container_width=True, disabled=activa):
+            st.session_state.camara_activa = True
+            st.rerun()
+    with boton_der:
+        if st.button("⏹ Detener", use_container_width=True, disabled=not activa):
+            st.session_state.camara_activa = False
+            liberar_camara()
+            st.rerun()
+
+    marcador_tarjetas = st.empty()
+    marcador_video = st.empty()
+    marcador_semaforo = st.empty()
+    marcador_avisos = st.empty()
+
+    if not activa:
+        marcador_video.info(
+            "Pulsa **Iniciar** para abrir la cámara. Apunta al elemento de forma que "
+            "su borde vertical quede dentro del encuadre y la superficie a inspeccionar "
+            "dentro del recuadro naranja."
+        )
+        return
+
+    captura = obtener_captura(fuente, int(cfg.get("ancho", 640)), int(cfg.get("alto", 480)))
+    if not captura.isOpened():
+        st.session_state.camara_activa = False
+        liberar_camara()
+        marcador_video.error(
+            f"No se pudo abrir la fuente `{fuente}`. Si es el celular, comprueba que la "
+            "app sigue emitiendo y que ambos estan en la misma red Wi-Fi. Si es la "
+            "webcam, puede estar en uso por otra "
+            "aplicación. Cierra Zoom, Teams o el navegador y vuelve a intentarlo."
+        )
+        return
+
+    st.session_state.lector_activo = captura
+    suave_prob, suave_angulo = _suavizadores(ventana)
+    medidor = st.session_state.setdefault("medidor_fps", MedidorFPS())
+    umbral = float(obtener(config, "riesgo.umbral_grieta", 0.5))
+    # Bucle CONTINUO, sin st.rerun() periodico.
+    #
+    # La version anterior capturaba en rafagas de un segundo y despues llamaba a
+    # st.rerun(). Funcionaba, pero cada rerun repinta la pagina entera: el video
+    # parpadeaba una vez por segundo y los textos cambiaban demasiado deprisa
+    # para poder leerlos.
+    #
+    # Streamlit comprueba si hay una interaccion pendiente cada vez que se
+    # actualiza un elemento, asi que este bucle **si es interrumpible**: al
+    # pulsar Detener, la llamada a marcador_video.image() lanza la excepcion de
+    # rerun y el script se reinicia. No hace falta trocear la captura.
+    intervalo_texto = float(cfg.get("segundos_entre_textos", 0.4))
+    ultimo_texto = 0.0
+    fotogramas = 0
+
+    while st.session_state.get("camara_activa"):
+        t_lectura = time.perf_counter()
+        leido, fotograma, edad_ms = captura.leer()
+        if not leido:
+            # El hilo aun no tiene el primer fotograma.
+            time.sleep(0.02)
+            if time.perf_counter() - t_lectura > 5.0:
+                break
+            continue
+
+        # Solo se diagnostica el primer fotograma de la rafaga: basta para
+        # detectar el problema y no cuesta nada en los siguientes.
+        if fotogramas == 0:
+            # Se pasa la ANTIGUEDAD, no el tiempo de lectura: con el hilo
+            # lector, read() devuelve al instante y ya no mide nada util.
+            problema = diagnosticar_fotograma(fotograma, edad_ms)
+            if problema:
+                st.session_state.camara_activa = False
+                liberar_camara()
+                marcador_video.error(f"**Problema de captura.** {problema}")
+                return
+
+        if not leido or fotograma is None:
+            break
+
+        # Espejo: mover la camara a la derecha debe mover la imagen a la derecha.
+        fotograma = cv2.flip(fotograma, 1)
+        resultado = procesar_fotograma(fotograma, predictor, config, controles, fraccion)
+
+        prob = suave_prob.agregar(resultado["probabilidad"])
+        inclinacion = resultado["inclinacion"]
+        angulo = suave_angulo.agregar(inclinacion.angulo_grados if inclinacion.fiable else None)
+        medidor.marcar()
+        fotogramas += 1
+
+        # Esta llamada es tambien el punto donde Streamlit puede interrumpir el
+        # bucle si el usuario pulsa Detener.
+        marcador_video.image(resultado["anotada_rgb"], use_column_width=True)
+        st.session_state.edad_fotograma = edad_ms
+
+        # La orientacion se mide sobre el RECORTE, nunca sobre el fotograma
+        # anotado: este ultimo lleva las lineas verdes de Hough dibujadas
+        # encima, y volver a pasarle Canny detectaria esas lineas en vez de la
+        # grieta. Ademas solo se calcula cuando hay grieta, porque es lo unico
+        # que el motor de reglas usa (R3/R4 exigen hay_grieta) y cada llamada es
+        # una pasada completa de Canny+Hough: ~3 ms por fotograma que no se
+        # gastan cuando no hacen falta.
+        if (prob or 0.0) >= umbral:
+            orientacion_txt = clasificar_orientacion_grieta(
+                resultado["recorte_bgr"],
+                config,
+                canny_bajo=controles["canny_bajo"],
+                canny_alto=controles["canny_alto"],
+            ).orientacion
+        else:
+            orientacion_txt = "indeterminada"
+
+        evaluacion = evaluar_riesgo(
+            probabilidad_grieta=float(prob or 0.0),
+            config=config,
+            elemento=controles["elemento"],
+            orientacion_grieta=orientacion_txt,
+            angulo_desaplome=angulo,
+            confianza_inclinacion=inclinacion.confianza if inclinacion.fiable else 0,
+        )
+
+        # El video se actualiza en cada fotograma; los textos, varias veces por
+        # segundo. Repintar las tarjetas y el semaforo a 15 Hz los vuelve
+        # ilegibles y ademas cuesta mas que el propio analisis.
+        ahora = time.perf_counter()
+        if ahora - ultimo_texto < intervalo_texto:
+            continue
+        ultimo_texto = ahora
+
+        marcador_tarjetas.markdown(
+            _tarjetas_vivo(
+                prob,
+                angulo,
+                inclinacion,
+                medidor.fps(),
+                resultado["ms_inferencia"],
+                umbral,
+                suave_prob.estabilidad(),
+                edad_ms,
+            ),
+            unsafe_allow_html=True,
+        )
+
+        marcador_semaforo.markdown(
+            estilos.semaforo(evaluacion.nivel, evaluacion.resumen), unsafe_allow_html=True
+        )
+
+        # Siempre el MISMO tipo de elemento. Alternar entre caption y warning
+        # cambia la altura del bloque y hace saltar todo lo que hay debajo, que
+        # es la otra mitad de la sensacion de parpadeo.
+        if not suave_prob.lleno():
+            aviso = f"⏳ Estabilizando: {len(suave_prob)}/{ventana} fotogramas en la ventana."
+        elif inclinacion.motivo_rechazo:
+            aviso = f"⚠️ Desaplome descartado: {inclinacion.motivo_rechazo}"
+        else:
+            aviso = (
+                f"✓ Nivel calculado sobre la mediana de los últimos {ventana} "
+                "fotogramas, no sobre el actual."
+            )
+        marcador_avisos.caption(aviso)
+
+    if fotogramas == 0:
+        st.session_state.camara_activa = False
+        liberar_camara()
+        marcador_video.error(
+            "La cámara se abrió pero no entregó ningún fotograma. Comprueba que no "
+            "esté siendo usada por otra aplicación."
+        )
+        return
+
+
+# --------------------------------------------------------------------------- #
 # Punto de entrada
 # --------------------------------------------------------------------------- #
 
@@ -1299,8 +1901,13 @@ def main() -> None:
         except (FileNotFoundError, ValueError, RuntimeError) as error:
             st.sidebar.error(f"No se pudo cargar el modelo: {error}")
 
-    pestana1, pestana2, pestana3 = st.tabs(
-        ["🔍 Análisis en vivo", "📊 Métricas del modelo", "ℹ️ Acerca del proyecto"]
+    pestana1, pestana2, pestana3, pestana4 = st.tabs(
+        [
+            "🔍 Análisis en vivo",
+            "📹 Cámara en vivo",
+            "📊 Métricas del modelo",
+            "ℹ️ Acerca del proyecto",
+        ]
     )
 
     with pestana1:
@@ -1316,9 +1923,21 @@ def main() -> None:
             bloque_comparar_latencias(config, imagen_rgb)
 
     with pestana2:
-        pestana_metricas(config)
+        pestana_camara(config, controles, predictor)
 
     with pestana3:
+        # Mientras la camara esta activa la pagina se recarga cada segundo.
+        # Reconstruir cinco figuras de Plotly en cada rerun robaria fotogramas al
+        # video sin que nadie las este mirando.
+        if st.session_state.get("camara_activa"):
+            st.info(
+                "Métricas en pausa mientras la cámara está activa, para no robarle "
+                "fotogramas al vídeo. Detén la cámara para volver a verlas."
+            )
+        else:
+            pestana_metricas(config)
+
+    with pestana4:
         pestana_acerca(config)
 
     st.markdown(

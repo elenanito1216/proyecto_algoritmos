@@ -325,6 +325,62 @@ app:
     # grieta (mas recall, menos precision). Medido: media 0.8235, maximo 0.8000.
     agregacion: "media"
   max_mb_subida: 10
+
+  # ---------------------------------------------------------------------------
+  # CAMARA EN VIVO
+  #
+  # La captura se hace en el SERVIDOR con cv2.VideoCapture, no en el navegador.
+  # Para la sustentacion (una demo local en el portatil del equipo) es lo
+  # adecuado y no anade ninguna dependencia. La alternativa, streamlit-webrtc,
+  # obligaria a subir Streamlit de 1.39 a 1.61 y a instalar 22 paquetes mas,
+  # invalidando el entorno congelado con el que se generaron todas las metricas.
+  # ---------------------------------------------------------------------------
+  camara:
+    # Fuente de video: "equipo" usa la webcam del portatil; "celular" lee el
+    # stream MJPEG que publica una aplicacion de camara IP en el telefono.
+    #
+    # Por que por red y no por WebRTC: usar la camara del movil DESDE EL
+    # NAVEGADOR exigiria HTTPS (los navegadores moviles solo dan acceso a la
+    # camara en contexto seguro) y la libreria streamlit-webrtc, que obligaria a
+    # subir Streamlit de 1.39 a 1.61 e invalidaria el entorno congelado con el
+    # que se generaron todas las metricas. Con una app de camara IP, la captura
+    # la hace el telefono de forma nativa y OpenCV solo consume el stream: cero
+    # dependencias nuevas y sin HTTPS.
+    fuente: "equipo"
+    # URL del stream del telefono. Se puede escribir abreviada ("192.168.1.40:8080"):
+    # la interfaz la completa. Puertos habituales: 8080 (IP Webcam), 4747 (DroidCam).
+    url_celular: ""
+    indice: 0
+    # Resolucion de captura. Canny y Hough son lineales en el numero de pixeles:
+    # 1920x1080 multiplicaria por seis el trabajo sin aportar ninguna recta que
+    # no estuviera ya en 640x480.
+    ancho: 640
+    alto: 480
+
+    # Fraccion del lado menor que se recorta del centro para CLASIFICAR.
+    # El modelo se entreno con parches en primer plano; una webcam da una vista
+    # amplia de la habitacion. Sin recorte, una grieta queda reducida a dos o
+    # tres pixeles al redimensionar a 160x160.
+    # La inclinometria, en cambio, se ejecuta sobre el fotograma COMPLETO:
+    # necesita ver el elemento vertical entero (reports/analisis.md, §3.6).
+    fraccion_recorte: 0.6
+
+    # Ventana del suavizado temporal por mediana. Sin el, la probabilidad oscila
+    # varias decimas entre fotogramas casi identicos y el semaforo parpadea.
+    # Mas grande estabiliza mas pero anade retardo al mover la camara.
+    ventana_suavizado: 7
+
+    # Duracion de cada rafaga de captura antes de devolver el control a
+    # Streamlit. Es el compromiso entre fluidez y capacidad de reaccion: el
+    # boton de parar no responde hasta que termina la rafaga en curso.
+    # Cada cuanto se refrescan las TARJETAS y el semaforo. El video se pinta en
+    # cada fotograma; los textos, a este ritmo. Repintarlos a 15 Hz los vuelve
+    # ilegibles: no da tiempo a leer el nivel de riesgo antes de que cambie.
+    segundos_entre_textos: 0.4
+
+    # Formato recomendado para video. Con TFLite int8 (4.9 ms) el sistema
+    # sostiene video fluido; con el ensemble (189 ms) el techo son ~5 FPS.
+    modelo_recomendado: "tflite"
   aviso_legal: >-
     Este prototipo es orientativo y de caracter academico. NO sustituye la
     inspeccion de un ingeniero estructural matriculado ni constituye un
