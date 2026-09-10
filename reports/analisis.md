@@ -6,115 +6,204 @@ Algoritmos y Programación · Ingeniería en Inteligencia Artificial · Universi
 
 ---
 
-> **Estado de este documento.** Completo. Todas las cifras proceden de artefactos de `reports/metricas/`, generados por `scripts/train_baseline.py`, `scripts/train_transfer.py`, `scripts/export_tflite.py`, `scripts/evaluate.py` y `scripts/validar_inclinacion.py`; la fuente de cada tabla está indicada para que cualquier número sea trazable hasta el archivo que lo respalda.
->
-> **Aviso importante sobre las cifras.** El 15.27 % del conjunto de prueba resultó estar duplicado en el de entrenamiento (§3.7). Donde importa, se reportan las métricas del **conjunto depurado**; las del conjunto completo se conservan para poder comparar contra los artefactos previos y siempre se indican como tales.
->
-> Las lagunas que quedan son de **tamaño de muestra**, no de ejecución: la validación de la inclinometría (§3.6) se apoya en una sola fotografía, por las razones que allí se explican, y el conjunto de fotos propias son 40 imágenes (§5.7). Ambas están declaradas donde corresponde en lugar de disimuladas.
+## Cómo leer este documento
+
+Este informe acompaña al proyecto y cumple una función distinta a la del `README`: allí se explica **qué hace** el sistema; aquí se explica **por qué se construyó así, qué tan bien funciona de verdad y en qué falla**.
+
+Está escrito para poder leerse sin ser especialista. Los términos técnicos se explican la primera vez que aparecen, y al final hay un [glosario](#glosario) con todos ellos reunidos.
+
+### Cómo está organizado
+
+| Sección | De qué trata |
+|---|---|
+| **1. Decisiones** | Por qué se eligió cada pieza, y qué alternativas se descartaron |
+| **2. Cuánto cuesta calcular** | Análisis del costo computacional, exigido por la asignatura |
+| **3. Resultados** | Las cifras medidas, incluidas las que no favorecen al proyecto |
+| **4. Análisis de errores** | Dónde y por qué se equivoca el sistema. **Es la sección más extensa, y a propósito** |
+| **5–7. Límites** | Qué no puede hacer, qué sesgos arrastra y qué implicaciones éticas tiene |
+| **8–9. Cierre** | Qué se haría a continuación y qué se puede afirmar honestamente |
+
+### Los cinco hallazgos principales
+
+Si solo se dispone de tiempo para una parte, es esta. Cada hallazgo está desarrollado en la sección indicada.
+
+**1. El examen estaba contaminado (§3.7).** El conjunto apartado para evaluar el modelo contenía un **15.27 % de imágenes que también estaban en el material de entrenamiento**. El modelo las acertaba todas: las recordaba, no las había aprendido a reconocer. Todas las cifras de este informe están recalculadas después de retirarlas.
+
+**2. El fallo era nuestro, no del modelo (§4.6).** El sistema funcionaba mal con las fotografías del equipo, y se atribuyó durante semanas a que las paredes colombianas son distintas. Al medir el **tamaño** de las imágenes apareció la verdadera causa: el propio preprocesamiento borraba las grietas antes de que el modelo las viera. Corregirlo subió la detección **del 80 % al 97 %** sin reentrenar nada.
+
+**3. Hay un ajuste que mejora los números y no se usa (§4.7).** Existe un valor de configuración que eleva el resultado a 0.9831, el mejor de todo el proyecto. Se descartó porque **funciona por seis diezmilésimas de margen**: acierta en estas sesenta fotografías por casualidad, no por haber aprendido nada.
+
+**4. Una mejora anterior dejó de estar justificada (§4.8).** Combinar dos modelos aportaba una ventaja clara. Al corregir el hallazgo 2, esa ventaja se redujo a **un solo caso de sesenta**. Lo que aportaba era compensar el error que ahora está resuelto en su origen, así que se retiró.
+
+**5. La continuación lógica no funcionó (§4.9).** Entrenar el modelo con imágenes ya degradadas parecía el paso natural después del hallazgo 2. Se implementó, se midió con dos entrenamientos comparables y el resultado fue **exactamente nulo**. Se descartó antes de gastar las dos horas del entrenamiento completo.
+
+### Una nota sobre el tono
+
+Tres de estos cinco hallazgos son **negativos**: un error propio y dos mejoras descartadas. Están contados con el mismo detalle que los positivos, y de forma deliberada.
+
+El motivo es que un proyecto que solo reporta lo que funcionó no permite saber si lo que reporta es cierto. Saber **por qué no se usa** un resultado de 0.9831 que existe y es reproducible dice más sobre el trabajo que el propio 0.9831.
+
+### Trazabilidad de las cifras
+
+Ningún número de este informe está escrito a mano. Todos proceden de archivos generados por los programas del proyecto, guardados en `reports/metricas/`, y **cada tabla indica de qué archivo sale**. Cualquiera puede volver a ejecutar el programa correspondiente y obtener lo mismo.
+
+> **Advertencia sobre el tamaño de la muestra.** Las conclusiones de este informe se apoyan en 60 fotografías propias, y en algunos casos —la validación de la medida de inclinación (§3.6)— en una sola. Eso limita cuánta confianza merece cada cifra, y está señalado en cada punto donde ocurre en lugar de disimulado.
 
 ---
 
 ## 1. Decisiones de arquitectura y su justificación
 
+Esta sección explica las cuatro decisiones de diseño que más condicionan el resultado. En todas ellas la pregunta de fondo es la misma: **qué se gana, qué se paga y qué alternativa se descartó.**
+
 ### 1.1 Por qué MobileNetV2 y no EfficientNet-Lite
 
-El enunciado contemplaba EfficientNet-Lite. **No está disponible en `keras.applications`**: la familia Lite existe únicamente como modelo de TensorFlow Hub o a través de TFLite Model Maker, no como constructor nativo de Keras. Forzarla habría añadido una dependencia externa, un formato de pesos distinto y un camino de exportación a TFLite más frágil, sin una ganancia clara sobre el objetivo del proyecto.
+*El enunciado del proyecto sugería una red llamada EfficientNet-Lite. Se usó otra, MobileNetV2, y conviene justificar el cambio.*
 
-Se usa **MobileNetV2**, que:
+EfficientNet-Lite **no está disponible en la librería que usa el proyecto**. Existe solo en repositorios externos y con un formato de pesos distinto. Incorporarla habría añadido una dependencia más, un formato adicional y un camino más frágil para exportar el modelo al teléfono, sin una ganancia clara.
 
-- está incluido en Keras, con pesos de ImageNet descargables sin dependencias extra;
-- fue diseñado explícitamente para inferencia en dispositivos móviles;
-- cuantiza a int8 sin operaciones no soportadas por el intérprete de TFLite;
-- es el estándar de facto contra el que se compara la literatura de detección de grietas en dispositivos embebidos.
+MobileNetV2, en cambio:
 
-La decisión está documentada también en `src/models/transfer.py` y se registra en el JSON de cada corrida (`nota_arquitectura`), para que quede trazada en los artefactos y no solo en la memoria.
+- viene incluida en la librería, con su entrenamiento previo ya descargable;
+- fue diseñada específicamente para funcionar en teléfonos;
+- se deja comprimir sin operaciones que el intérprete móvil no entienda;
+- es la referencia habitual en los trabajos publicados sobre detección de grietas en dispositivos pequeños, lo que permite comparar.
 
-### 1.2 Por qué `alpha = 0.75`
+La decisión queda registrada en el código y en el archivo de resultados de cada entrenamiento, no solo en este documento.
 
-El *width multiplier* escala el número de canales de cada capa. Con `alpha = 0.75` la base pasa de ~2.26 M a ~1.38 M parámetros (−39 %) y el número de multiplicaciones-acumulaciones cae aproximadamente con `alpha²`, es decir, al ~56 % del original.
+### 1.2 Por qué se usa una versión reducida de la red
 
-El razonamiento es que la tarea es de **textura binaria** —¿esta superficie está fisurada?— y no de reconocimiento fino entre mil categorías. La capacidad sobrante de `alpha = 1.0` no se aprovecha, pero sí se paga en latencia y en tamaño de descarga. En un proyecto cuya restricción explícita es funcionar en un equipo modesto, esa capacidad ociosa es un costo sin contrapartida.
+MobileNetV2 tiene un parámetro que permite **encogerla de forma proporcional**. Se usó el valor 0.75, que deja la red en tres cuartas partes de su ancho: pasa de 2.26 a 1.38 millones de parámetros —un 39 % menos— y realiza aproximadamente la mitad de operaciones.
 
-### 1.3 Por qué 160×160 y no 224×224
+El razonamiento es que la tarea es sencilla en un sentido concreto: hay que decidir si una superficie está fisurada o no. No hay que distinguir entre mil categorías distintas. La capacidad sobrante de la red completa **no se aprovecha, pero sí se paga** en tiempo de cálculo y en tamaño de descarga. En un proyecto cuya restricción explícita es funcionar en un equipo modesto, esa capacidad ociosa es un costo sin contrapartida.
 
-El costo de una capa convolucional es lineal en el número de píxeles y, por tanto, **cuadrático en el lado de la imagen**:
+### 1.3 Por qué las imágenes se procesan a 160 × 160 píxeles
+
+El costo de procesar una imagen crece **con el cuadrado de su lado**: duplicar el lado cuadruplica el trabajo. Comparando las dos resoluciones habituales:
 
 ```
 costo(160×160) / costo(224×224) = (160/224)² = 0.51
 ```
 
-La mitad de cómputo. La pregunta es qué se pierde. Una grieta estructuralmente relevante ocupa entre 2 y 4 píxeles de ancho en el encuadre típico del dataset; a 160×160 esa firma de alta frecuencia sobrevive al submuestreo. A 128×128 se ahorraría un 36 % adicional, pero las fisuras capilares empiezan a difuminarse, y **en este dominio el error caro es el falso negativo**. Ahorrar un tercio de cómputo a cambio de perder recall en la clase peligrosa es un mal negocio.
+Es decir, **la mitad de cómputo**. La pregunta relevante es qué se pierde a cambio.
 
-Restricción adicional: los pesos preentrenados de MobileNetV2 solo existen para resoluciones de {96, 128, 160, 192, 224}. 160 es el valor admisible que mejor equilibra ambas presiones.
+Una grieta estructuralmente relevante ocupa entre 2 y 4 píxeles de ancho en el encuadre típico del conjunto de datos. A 160 × 160 ese rastro sobrevive. Bajando a 128 × 128 se ahorraría un 36 % adicional, pero las fisuras más finas empiezan a desdibujarse — y **en este problema el error caro es no detectar una grieta que existe**. Ahorrar un tercio de cómputo a cambio de perder detección en la clase peligrosa es un mal negocio.
 
-### 1.4 Por qué un motor de reglas y no un segundo modelo
+Hay además una restricción práctica: el entrenamiento previo de MobileNetV2 solo está publicado para cinco resoluciones concretas (96, 128, 160, 192 y 224). De las disponibles, 160 es la que mejor equilibra ambas presiones.
 
-Un clasificador de "riesgo" necesitaría etiquetas de riesgo. Esas etiquetas no existen en ningún dataset público y solo un ingeniero estructural matriculado puede emitirlas. Entrenar sobre etiquetas inventadas por el equipo produciría un modelo que aprende las opiniones de cuatro estudiantes de pregrado, presentadas con la autoridad de una red neuronal.
+> **Nota importante.** Esta decisión, que parecía cerrada, resultó ser la causa del problema principal del proyecto. Ver §4.6.
 
-El motor de reglas (`src/risk/reglas.py`) es una **función pura** que:
+### 1.4 Por qué las reglas de riesgo no son otra red neuronal
 
-- es **auditable**: cada regla cita el criterio de ingeniería que la motiva;
-- es **explicable**: la salida incluye qué reglas se dispararon y con qué valores;
-- es **recalibrable**: todos los umbrales están en `config.yaml`; un ingeniero puede ajustarlos sin tocar una línea de Python ni reentrenar nada;
-- es **testeable**: 33 pruebas unitarias cubren su comportamiento, incluidas propiedades de monotonía (más evidencia de grieta nunca puede rebajar el nivel de riesgo).
+Sería técnicamente posible entrenar una segunda red que dijera directamente «riesgo alto» o «riesgo bajo». Se descartó, y este es el argumento.
+
+Para entrenar esa red harían falta **ejemplos etiquetados con su nivel de riesgo**. Esas etiquetas no existen en ningún conjunto de datos público, y solo un ingeniero estructural matriculado puede emitirlas. Entrenar sobre etiquetas inventadas por el equipo produciría un modelo que aprende **las opiniones de cuatro estudiantes de pregrado, presentadas con la autoridad de una red neuronal**. El error no sería menor por estar automatizado; sería menos visible.
+
+En su lugar, las reglas están escritas explícitamente en el código, y eso las hace:
+
+- **auditables** — cada regla cita el criterio de ingeniería que la motiva;
+- **explicables** — el resultado incluye qué reglas se activaron y con qué valores;
+- **corregibles** — todos los límites están en un archivo de configuración; un ingeniero puede ajustarlos sin tocar una línea de código ni volver a entrenar nada;
+- **verificables** — 33 pruebas automáticas comprueban su comportamiento, incluida una propiedad que debe cumplirse siempre: más evidencia de grieta nunca puede rebajar el nivel de riesgo.
 
 ---
 
 ## 2. Análisis de complejidad computacional
 
-### 2.1 Complejidad asintótica del módulo clásico
+*Esta sección responde a un requisito de la asignatura: analizar cuánto trabajo cuesta ejecutar el sistema. Antes de las tablas, una explicación de qué significa lo que se mide.*
 
-Sea `n = H × W` el número de píxeles y `m` el número de píxeles de borde tras Canny (típicamente entre el 1 % y el 5 % de `n`).
+### Qué se está midiendo y por qué importa
 
-| Etapa | Complejidad | Nota |
+Cuando se dice que un programa es «lineal», se quiere decir que **si se le da el doble de datos, tarda aproximadamente el doble**. Si es «cuadrático», con el doble de datos tarda cuatro veces más. La notación `O(n)` es la forma convencional de escribir eso: `n` representa el tamaño de la entrada, y lo que va dentro del paréntesis describe cómo crece el trabajo cuando `n` crece.
+
+Esto importa por una razón práctica: una fotografía de teléfono actual tiene doce millones de píxeles, y el sistema debe responder en un tiempo razonable en un computador corriente. Saber si el costo crece de forma lineal o cuadrática determina qué se puede permitir y qué no.
+
+### 2.1 Costo del módulo que mide la inclinación
+
+Este módulo no usa redes neuronales: detecta los bordes rectos de la imagen y calcula su ángulo. Llamando `n` al número de píxeles y `m` al número de píxeles que resultan ser borde (típicamente entre el 1 % y el 5 % de `n`):
+
+| Etapa | Costo | Explicación |
 |---|---|---|
-| Conversión a escala de grises | `O(n)` | Una combinación lineal por píxel |
-| Desenfoque gaussiano, kernel `k` | `O(n·k)` | Separable; con `k = 5` fijo, es `O(n)` |
-| Gradientes Sobel | `O(n)` | Kernel fijo 3×3 |
-| Supresión de no máximos | `O(n)` | Una comparación local por píxel |
-| Histéresis de Canny | `O(n)` amortizado | Cada píxel entra una vez en la pila |
-| **HoughLinesP** | `O(m·T)` | `T` = número de valores discretos de θ; con resolución de 1°, `T = 180` |
-| Filtrado y mediana ponderada | `O(L log L)` | `L` = segmentos detectados, del orden de decenas |
+| Pasar a blanco y negro | `O(n)` | Una cuenta sencilla por píxel |
+| Desenfocar ligeramente | `O(n)` | Reduce el ruido antes de buscar bordes |
+| Detectar cambios bruscos | `O(n)` | Los bordes son zonas donde el color cambia de golpe |
+| Afinar los bordes | `O(n)` | Deja solo la línea más nítida de cada borde grueso |
+| Encadenar bordes | `O(n)` | Une los trozos que pertenecen al mismo borde |
+| **Buscar líneas rectas** | `O(m·T)` | Cada píxel de borde «vota» por las rectas a las que podría pertenecer. `T` = 180, un voto por cada grado |
+| Calcular el ángulo final | `O(L log L)` | `L` = líneas encontradas, del orden de unas decenas |
 
-**Total: `O(n + m·T)`.** Como `m << n` y `T` es una constante de configuración, el pipeline es **lineal en el número de píxeles**.
+**Costo total: `O(n + m·T)`.** Como los píxeles de borde son muy pocos comparados con el total, y `T` es un número fijo, en la práctica **el costo crece de forma lineal con el número de píxeles**.
 
-Consecuencia práctica: el tiempo de pared está dominado por Canny, y **la única optimización que importa es reducir la resolución antes de procesar**, porque `n` cae cuadráticamente con el lado. Por eso la aplicación limita el lado mayor a 1024 px antes de la inclinometría: una foto de móvil de 12 MP multiplicaría por doce el trabajo sin aportar una sola línea recta adicional que fuese informativa.
+**La consecuencia práctica es la que importa.** Casi todo el tiempo se va en detectar bordes, y la única optimización que cambia algo es **reducir la imagen antes de procesarla**, porque el número de píxeles cae con el cuadrado del lado. Por eso la aplicación limita el lado mayor a 1024 píxeles antes de medir la inclinación: procesar una fotografía de 12 megapíxeles multiplicaría el trabajo por doce sin aportar ni una sola línea recta adicional que fuese útil.
 
-### 2.2 Complejidad asintótica del pipeline de inferencia
+### 2.2 Costo de la red neuronal
 
-Una capa convolucional con entrada `H×W×C_in`, kernel `k×k` y `C_out` filtros cuesta
+Una capa de la red aplica un filtro pequeño sobre toda la imagen. Su costo es:
 
 ```
-O(H · W · k² · C_in · C_out)
+O(alto · ancho · k² · canales_entrada · canales_salida)
 ```
 
-multiplicaciones-acumulaciones. Tres consecuencias:
+donde `k` es el tamaño del filtro (normalmente 3 × 3). De esta fórmula se siguen tres consecuencias, y las tres justifican decisiones ya tomadas:
 
-1. **Cuadrático en la resolución** (justifica 160×160, §1.3).
-2. **MobileNetV2 usa convolución separable en profundidad**: descompone la operación en un filtrado `k×k` por canal (`H·W·k²·C_in`) seguido de una mezcla `1×1` entre canales (`H·W·C_in·C_out`). La razón frente a la convolución densa es `1/C_out + 1/k²`, es decir, **entre 8 y 9 veces menos operaciones con `k = 3`**. Ahí está el grueso de su eficiencia, no en tener menos capas.
-3. **`alpha` escala `C_in` y `C_out` simultáneamente**, así que el costo cae aproximadamente con `alpha²` (justifica `alpha = 0.75`, §1.2).
+**1. El costo crece con el cuadrado de la resolución.** Aparecen `alto` y `ancho` multiplicándose. Esto justifica la elección de 160 × 160 (§1.3).
 
-La **cuantización a int8 no cambia el orden asintótico**: cambia la constante. Aritmética entera de 8 bits en lugar de coma flotante de 32, y cuatro veces menos ancho de banda de memoria. En CPU móvil eso suele traducirse en una aceleración real de 2× a 3×, que es exactamente lo que la tabla de §3.2 debe confirmar o desmentir con medidas propias.
+**2. MobileNetV2 es eficiente por cómo descompone la operación, no por tener menos capas.** En lugar de aplicar un filtro que mezcla todos los canales a la vez, hace dos pasos: primero filtra cada canal por separado, después los mezcla con una operación mínima. El resultado es **entre 8 y 9 veces menos operaciones** para un efecto equivalente. Ahí está el grueso de su eficiencia.
 
-### 2.3 Metodología de medición
+**3. Encoger la red reduce el costo al cuadrado.** El parámetro de la §1.2 afecta simultáneamente a los canales de entrada y a los de salida, y ambos se multiplican en la fórmula. Por eso reducir la red a 0.75 deja el costo en aproximadamente 0.56 — algo más de la mitad.
 
-Las cifras de latencia se obtienen con `src/eval/complejidad.py` bajo un protocolo explícito, porque una medida de latencia sin protocolo no significa nada:
+**Sobre la compresión a enteros de 8 bits:** no cambia la fórmula, cambia lo que cuesta cada operación individual. Se trabaja con números enteros pequeños en vez de decimales largos, lo que ocupa cuatro veces menos memoria y se calcula más rápido. En teoría eso da entre 2 y 3 veces de aceleración. La tabla de §3.2 mide si eso se cumple de verdad — y el resultado real es mucho mayor de lo esperado.
 
-- **60 repeticiones** por modelo (el enunciado exige ≥ 50), con **10 de calentamiento descartadas**. La primera llamada incluye construcción del grafo, reserva de buffers y llenado de cachés: incluirla contaminaría la media con un atípico de cientos de milisegundos.
-- Se invoca `modelo(x, training=False)` y no `modelo.predict()`. Este último añade la maquinaria de callbacks y el troceado en lotes, que no forma parte del costo de inferir.
-- **Lote de 1 imagen**: es el escenario real de la aplicación, no el de máximo rendimiento.
-- **TFLite con un solo hilo**, para representar un dispositivo modesto. Medir con todos los hilos de un portátil daría una cifra optimista que no describe al dispositivo objetivo.
-- La memoria se mide como **incremento del RSS del proceso** con `psutil`, no con `tracemalloc`: el grueso de la memoria de TensorFlow se reserva en buffers de C++ que el rastreador del asignador de Python no ve.
+### 2.3 Cómo se midieron los tiempos
+
+Una medida de tiempo sin protocolo declarado no significa nada, así que aquí está el que se usó:
+
+- **60 mediciones por modelo**, de las cuales **se descartan las 10 primeras**. La primera vez que se ejecuta un modelo hay trabajo de preparación que no forma parte del costo real de usarlo; incluirla contaminaría el promedio con un valor atípico de cientos de milisegundos.
+- Se mide **una fotografía cada vez**, que es como funciona la aplicación real, y no en grandes bloques, que daría una cifra más favorable pero menos representativa.
+- El modelo comprimido se mide **con un solo hilo de procesador**, para representar un dispositivo modesto. Medirlo aprovechando todos los núcleos de un portátil daría una cifra optimista que no describe al aparato al que va destinado.
+- La memoria se mide observando **cuánta consume el proceso completo**, no solo la parte que gestiona Python, porque la mayor parte se reserva en un nivel más bajo que las herramientas de Python no ven.
 
 ---
 
 ## 3. Resultados
 
-**Configuración de las corridas reportadas.** Dataset de 58 138 imágenes (24 001 + 16 695 en entrenamiento; 41.03 % de la clase positiva), partición estratificada 70/15/15 con semilla 42: 40 696 / 8 721 / 8 721. Entrada 160×160×3, lote 32, pesos de clase balanceados. Hardware: CPU AMD Ryzen (AMD64 Family 23 Model 160), Windows 10, 15.2 GB de RAM, TensorFlow 2.19.0, **sin GPU**.
+*Esta sección reúne todo lo que se midió. Antes de las tablas conviene tener claro qué significa cada cifra, porque de ahí depende que las conclusiones se entiendan.*
 
-Todas las cifras salen de artefactos de `reports/metricas/`; la fuente de cada tabla está indicada.
+### Cómo leer las tablas de esta sección
 
-### 3.1 Desempeño: línea base frente a transfer learning
+Un detector de grietas puede equivocarse de dos maneras muy distintas, y **no cuestan lo mismo**:
+
+| Tipo de error | Qué pasó | Qué cuesta |
+|---|---|---|
+| **Falso negativo** | Hay grieta y el sistema dice que no | Una grieta que nadie va a revisar. **Es el error grave** |
+| **Falso positivo** | No hay grieta y el sistema avisa | Una inspección que no hacía falta. Molesto, no peligroso |
+
+A partir de ahí, las cifras que aparecen en las tablas:
+
+| Métrica | Qué mide | Ejemplo |
+|---|---|---|
+| **Recall** | De todas las grietas que existen, cuántas encuentra | 0.90 = encuentra 90 de cada 100 |
+| **Precisión** | De todas las veces que avisa, cuántas eran grieta de verdad | 0.99 = de 100 avisos, 99 correctos |
+| **F1** | Resume recall y precisión en un solo número. Sube solo si suben ambas | Va de 0 a 1 |
+| **Exactitud** | Porcentaje de aciertos sobre el total | Engaña si una clase es mucho más frecuente |
+| **ROC-AUC** | Si el sistema tiene *señal* aunque esté mal ajustado | 0.5 = adivina al azar; 1.0 = perfecto |
+
+**Por qué se mira el F1 y no la exactitud.** Si de cada 100 fotografías 60 no tienen grieta, un sistema que dijera siempre «no hay grieta» tendría un 60 % de exactitud sin haber aprendido nada. El F1 no se deja engañar por eso, porque exige acertar en la clase que importa.
+
+**Y por qué se mira el recall por encima del F1.** En este problema el objetivo no es tener el mejor promedio, sino **dejar pasar las menos grietas posible**. Un sistema con muchas falsas alarmas es incómodo; uno que se calla ante una grieta real es peligroso. Ese criterio, desarrollado en §4.1, explica varias decisiones que de otro modo parecerían raras.
+
+### Condiciones en las que se midió todo
+
+**Los datos:** 58 138 imágenes del conjunto público, repartidas en tres grupos que nunca se mezclan — 40 696 para aprender, 8 721 para ajustar durante el desarrollo y 8 721 apartadas para el examen final. El reparto es reproducible: la misma semilla aleatoria produce siempre la misma división.
+
+**El equipo:** un portátil corriente con procesador AMD Ryzen, Windows 10, 15.2 GB de memoria y **sin tarjeta gráfica**. Esto último importa: significa que cualquiera puede reproducir el proyecto sin equipo especializado, y también que los tiempos medidos son los de un escenario realista, no los de un servidor.
+
+**Trazabilidad:** todas las cifras salen de archivos generados automáticamente y guardados en `reports/metricas/`. Cada tabla indica de qué archivo procede.
+
+### 3.1 ¿Cuánto mejora partir de una red que ya sabe ver?
+
+> **En pocas palabras.** Partir de una red ya entrenada reduce en un 32 % las grietas que se escapan, pero multiplica por 52 el tamaño del modelo. Lo que salva el intercambio no es esa mejora, sino la compresión posterior (§3.2), que devuelve la velocidad perdida y más.
+
+*«Línea base» es una red pequeña que el equipo entrenó desde cero, sin conocimiento previo. Sirve de punto de comparación: si una técnica más sofisticada no la supera, no vale la pena. «Transfer learning» es partir de una red que ya aprendió a ver imágenes en general y reentrenarla para grietas.*
 
 Conjunto de **prueba** (8 721 imágenes: 5 143 sin grieta, 3 578 con grieta), umbral 0.50.
 Fuente: `evaluacion.json` → `modelos.<etiqueta>.test.metricas`
@@ -155,7 +244,9 @@ Fuente: `entrenamiento_mobilenetv2.json` → `metricas_val_congelado` / `metrica
 2. **El fine-tuning mejora de verdad, no sobreajusta.** Sobre validación mejora las cuatro métricas a la vez —F1 +0.0075, ROC-AUC +0.0027— y reduce simultáneamente falsos negativos (284 → 255) y falsos positivos (49 → 26). Cuando una segunda etapa mejora ambos errores a la vez, no está desplazando el umbral: está aprendiendo. Descongelar 19 capas con LR 1e-5 fue una intervención conservadora y acertada.
 3. **La cuantización int8 cuesta 0.0125 de F1** (0.9574 → 0.9449) y **90 falsos negativos más** (275 → 365), a cambio de **8.0× menos tamaño y 30.8× menos latencia**. En el conjunto de prueba el intercambio es claramente favorable. Fuera de distribución **no lo es**, y esa es la advertencia de §3.5.
 
-### 3.2 Costo computacional
+### 3.2 ¿Cuánto cuesta ejecutarlo?
+
+> **En pocas palabras.** El modelo comprimido tarda 4.82 milisegundos por fotografía y ocupa 1.74 MB. Es 30.8 veces más rápido que la versión sin comprimir de la que sale, y **3.5 veces más rápido que la red pequeña**, que tiene 52 veces menos parámetros. El tamaño del modelo predice mal la velocidad.
 
 Latencia medida con lote de 1 imagen, 60 repeticiones tras 10 de calentamiento; TFLite con **un solo hilo** para representar un dispositivo modesto.
 Fuente: `comparativa.csv` y `exportacion_tflite.json`
@@ -174,7 +265,9 @@ Dos aclaraciones de método, para que las cifras se lean bien:
 
 **El resultado que sostiene la viabilidad móvil:** el TFLite int8 corre a **4.82 ms por imagen (207 img/s) ocupando 1.74 MB**, en la CPU de un portátil sin GPU y con un solo hilo. Es **30.8× más rápido que el `.keras`** del que procede y **3.5× más rápido que la línea base**, que tiene 52 veces menos parámetros. Ahí se ve que la eficiencia no viene del tamaño del modelo sino del formato de ejecución.
 
-### 3.3 Costo de entrenamiento
+### 3.3 ¿Cuánto costó construirlo?
+
+> **En pocas palabras.** 4 horas y 5 minutos de cómputo en un portátil corriente. Dos expectativas razonables resultaron falsas al medirlas, y ambas apuntan a lo mismo: el tiempo no se iba donde se suponía.
 
 Fuente: `entrenamiento_*.json` → `tiempos` y `dispositivo`
 
@@ -190,7 +283,9 @@ Una observación que contradice la expectativa inicial y merece explicarse. Se a
 
 Igual de revelador: la línea base, con **52 veces menos parámetros**, tardó **435.4 s/época** frente a los 473.2 de MobileNetV2. Solo un 8 % menos. Con lotes de 32 imágenes a 160×160 en CPU, el tiempo lo consume la lectura y decodificación del dataset, no la aritmética del modelo. Es la misma lección que la de §3.2 vista desde el otro lado: **el cuello de botella casi nunca está donde uno supone antes de medir**.
 
-### 3.4 Generalización: dataset público frente a fotos propias
+### 3.4 El examen de verdad: fotografías tomadas por el equipo
+
+> **En pocas palabras.** Es el resultado más importante del informe. Con fotografías reales el sistema **pierde entre el 40 % y el 55 % de las grietas**, y el modelo que mejor puntúa en el conjunto público es el que peor se comporta en la realidad. Un ranking hecho solo con el conjunto público habría recomendado el peor de los tres.
 
 Conjunto propio: 40 fotografías tomadas por el equipo (20 con grieta, 20 sin grieta), nunca usadas para entrenar ni para elegir hiperparámetros.
 
@@ -217,7 +312,9 @@ El ROC-AUC sobre fotos propias (0.9100 línea base, 0.8400 MobileNetV2, 0.8288 T
 
 Con 40 imágenes, los intervalos de confianza son anchos y estas cifras sirven para detectar un fallo grueso de generalización, no para estimarlo con precisión (§5.7). El fallo grueso está detectado.
 
-### 3.5 La cuantización int8 destruye el margen de recalibración
+### 3.5 Comprimir el modelo tiene un costo oculto
+
+> **En pocas palabras.** El modelo comprimido no solo pierde algo de acierto: **pierde la capacidad de ser ajustado**. La perilla que sirve para volverlo más sensible deja de funcionar justo en el escenario para el que se diseñó. Esto no aparece en ninguna métrica del conjunto público.
 
 Este resultado no estaba previsto y salió de analizar las probabilidades almacenadas en `evaluacion.json` → `modelos.<etiqueta>.propias.probabilidades`.
 
@@ -245,7 +342,9 @@ La causa es que la cuantización comprime el rango dinámico de la salida, y ant
 
 Para el despliegue real esto sugiere una arquitectura distinta de la que se supone por defecto: usar int8 como **filtro rápido de primer paso** y reservar el `.keras` (o al menos una variante float32) para los casos dudosos, en lugar de sustituir uno por otro sin más.
 
-### 3.6 Validación de la inclinometría
+### 3.6 ¿Mide bien la inclinación?
+
+> **En pocas palabras.** Sí, con un error de 0.039°, trece veces mejor de lo exigido. Pero **solo consigue medir en 1 de cada 40 fotografías**: muy preciso cuando funciona, y funciona pocas veces. Las dos mitades del resultado se reportan juntas.
 
 Fuente: `reports/metricas/validacion_inclinacion.json`
 
@@ -293,7 +392,9 @@ Esto tiene dos implicaciones prácticas:
 
 **Verificación adicional sobre imágenes sintéticas.** `tests/test_inclinacion.py` valida el estimador con ángulos exactos conocidos (0°, ±2°, ±5°, ±10°, 20°) y tolerancia de 1.5°, comprueba la robustez frente a segmentos espurios y verifica la fidelidad diferencial bajo rotación. Las 39 pruebas del módulo pasan. Esa batería cubre la corrección **geométrica**; la tabla de arriba cubre el comportamiento sobre **fotografía real**, que es donde entran el ruido del sensor, la compresión JPEG y la iluminación no controlada.
 
-### 3.7 Fuga de datos: el 15 % del conjunto de prueba estaba en el de entrenamiento
+### 3.7 El examen estaba contaminado: el 15 % ya estaba en el material de estudio
+
+> **En pocas palabras.** El conjunto apartado para evaluar contenía imágenes que el modelo ya había visto al entrenar. Las acertaba todas porque las recordaba. Todas las cifras del informe están recalculadas tras retirarlas.
 
 Fuente: `reports/metricas/fuga_datos.json`, generado por `scripts/analizar_fuga_datos.py`
 
@@ -371,7 +472,9 @@ El dataset no permite un reparto sin fuga porque los nombres de archivo no codif
 
 **Nota metodológica que merece la pena retener (sobre este apartado).** El primer veredicto de este análisis —basado solo en el pHash— decía 15.71 % de contaminación. Una verificación apresurada sobre 10 pares sugirió después que el 70 % eran colisiones y que la fuga era despreciable. La verificación exhaustiva sobre los 1 370 candidatos dio el número correcto: 97.2 % confirmados. **Ninguna de las dos primeras cifras era fiable, y las dos eran fáciles de creer.** La lección no es sobre hashing: es que una medición sin verificación y una verificación sin muestra suficiente fallan igual de bien.
 
-### 3.8 Robustez sin reentrenar: TTA, ensemble y recalibración del umbral
+### 3.8 Tres intentos de mejorar sin volver a entrenar
+
+> **En pocas palabras.** Se probaron tres técnicas que no requieren reentrenar. Una funcionó y se adoptó; las otras dos no compensaron su costo. *(Nota posterior: la que funcionó dejó de estar justificada al corregir el problema de §4.6. Ver §4.8.)*
 
 Fuente: `reports/metricas/robustez.json`, generado por `scripts/evaluar_robustez.py`
 
@@ -445,7 +548,21 @@ Estos resultados sobre fotos propias se apoyan en **40 imágenes**: la diferenci
 
 ## 4. Análisis de errores
 
-### 4.1 Falsos negativos: el error costoso
+*Esta es la sección más extensa del informe, y lo es a propósito.*
+
+Un proyecto se puede presentar de dos maneras. La primera es enseñar lo que funciona y guardar silencio sobre lo demás. La segunda es enseñar **dónde se rompe, por qué, y qué se hizo al respecto**. La segunda es más incómoda de escribir y mucho más útil de leer, porque es la única que permite juzgar si las cifras de la sección 3 significan algo.
+
+Las nueve subsecciones se agrupan en tres bloques:
+
+| Bloque | Subsecciones | De qué tratan |
+|---|---|---|
+| **Errores del sistema** | 4.1 – 4.5 | Cómo se equivoca y por qué; incluye un fallo que solo apareció al usar la aplicación |
+| **El hallazgo principal** | 4.6 | El error estaba en nuestro procesamiento, no en el modelo. Es el descubrimiento central del proyecto |
+| **Dos mejoras descartadas** | 4.7 – 4.9 | Un ajuste que mejora los números y no se usa, y un experimento que no sirvió para nada |
+
+### 4.1 El error que sí importa: no ver una grieta que existe
+
+> **En pocas palabras.** Los dos errores posibles no cuestan lo mismo, ni de lejos. Todo el diseño del sistema parte de ahí, y esta subsección es la que justifica decisiones que aparecen en el resto del informe.
 
 Fuente: `reports/metricas/evaluacion.json` → `modelos.<etiqueta>.test.falsos_negativos`
 
@@ -479,7 +596,9 @@ Dicho de otro modo: **cada grieta recuperada cuesta 1.44 revisiones innecesarias
 
 Los otros dos modelos pagan ese recall mucho más caro: la línea base necesita bajar a 0.1824 y su precisión cae a 0.8682; el TFLite int8 baja a 0.1797 y se desploma a 0.8108. **MobileNetV2 no solo tiene mejor F1: es el que compra recall al mejor precio**, que es el criterio que de verdad importa aquí. Ese argumento no se ve en la tabla de §3.1 y es el que justifica elegirlo pese a sus 52× más parámetros.
 
-### 4.2 Modos de fallo esperados del clasificador
+### 4.2 En qué se equivoca la detección de grietas
+
+> **En pocas palabras.** Los fallos no son aleatorios: siguen patrones identificables, y saber cuáles son permite anticiparlos en lugar de sufrirlos.
 
 | Modo de fallo | Causa | Mitigación aplicada |
 |---|---|---|
@@ -489,7 +608,9 @@ Los otros dos modelos pagan ese recall mucho más caro: la línea base necesita 
 | Falso negativo por distancia excesiva | La grieta ocupa pocos píxeles tras redimensionar a 160×160 | Protocolo de captura documentado; no hay solución algorítmica sin más resolución |
 | Fallo en ladrillo a la vista o pañete | Fuera de la distribución de entrenamiento | Ninguna. Es una limitación honesta del dataset |
 
-### 4.3 Modos de fallo de la inclinometría
+### 4.3 En qué se equivoca la medida de inclinación
+
+> **En pocas palabras.** El módulo confunde con facilidad un borde recto cualquiera con el borde del elemento que debería medir.
 
 | Modo de fallo | Causa | Mitigación aplicada |
 |---|---|---|
@@ -501,7 +622,9 @@ Los otros dos modelos pagan ese recall mucho más caro: la línea base necesita 
 | **La orientación detectada es la del elemento, no la de la grieta** | Hough no distingue semánticamente una fisura de la arista de una columna | Documentado en la interfaz y en §4.4. Sin solución dentro de este enfoque |
 | **La grieta tomada como eje del elemento** (reverso del anterior) | En un primer plano de pared sin aristas, la única recta casi vertical es la propia fisura | **Tres guardarraíles de verosimilitud** (ángulo máximo, dispersión y extensión vertical) que descartan la medida; más auditoría visual del operador (§4.5). Era el modo de fallo más peligroso: disparaba R5 y producía un riesgo Alto falso |
 
-### 4.4 La orientación de la grieta se confunde con la del elemento
+### 4.4 El sistema confunde la grieta con el borde de la pared
+
+> **En pocas palabras.** Al medir la inclinación de una fisura, a veces mide en realidad la arista de la columna. Ambas son líneas rectas y el método no sabe distinguirlas.
 
 Detectada durante la validación de extremo a extremo, y conviene explicarla porque es una limitación **de diseño**, no un fallo de implementación.
 
@@ -517,7 +640,9 @@ Mitigaciones aplicadas:
 - El motor de reglas solo usa la orientación **cuando ya hay grieta detectada** (`R3`/`R4` exigen `hay_grieta`), lo que limita el daño: sobre una pared sana la orientación no influye en el nivel.
 - El efecto es en general **conservador**: «vertical» está catalogada como no grave en muros, de modo que el fallo típico rebaja la regla `R3` a `R4` en vez de generar una alarma falsa. Pero en una viga, donde «vertical» sí es grave, podría ir en la dirección contraria. No es una mitigación completa y no se presenta como tal.
 
-### 4.5 El caso simétrico: la grieta tomada como eje del elemento
+### 4.5 Y el error inverso: toma la grieta por el borde de la pared
+
+> **En pocas palabras.** El mismo problema al revés, y más grave: el sistema llegó a informar de una inclinación de 34.90° —imposible en un edificio en pie— porque estaba midiendo una grieta. **Este fallo se descubrió usando la aplicación, no ejecutando pruebas**, y se corrigió con tres comprobaciones de verosimilitud.
 
 Detectado durante el uso de la aplicación, ajustando los controles de sensibilidad sobre una fotografía propia. Es el **reverso exacto de §4.4** y, a diferencia de aquel, produce una **falsa alarma de riesgo Alto**.
 
@@ -598,7 +723,9 @@ Mitigaciones que siguen dependiendo del operador:
 
 **Este hallazgo apareció usando la aplicación, no ejecutando pruebas.** Es un argumento a favor de haber construido una interfaz que muestra el trabajo intermedio del algoritmo en lugar de solo su conclusión: un panel que hubiera mostrado únicamente «Riesgo Alto · desaplome 34.90°» habría ocultado el error por completo.
 
-### 4.6 El error no era del modelo: era nuestro, y estaba en el redimensionado
+### 4.6 El error no era del modelo: estaba en cómo le encogíamos las fotos
+
+> **En pocas palabras.** El descubrimiento central del proyecto. Durante semanas se creyó que el sistema fallaba con fotos reales porque las paredes colombianas son distintas. La causa real era que **nuestro propio procesamiento borraba las grietas** antes de que el modelo pudiera verlas. Corregirlo subió la detección del 80 % al 97 % sin reentrenar nada.
 
 Esta sección corrige un diagnóstico anterior de esta misma memoria. Es el hallazgo más importante del proyecto y también el más incómodo, porque durante varias fases se atribuyó a la naturaleza del problema un fallo que habíamos introducido nosotros.
 
@@ -693,8 +820,9 @@ Es la tercera vez en este proyecto que un fallo atribuido al modelo resultó est
 
 El patrón que las une: **medir la entrada antes de culpar al modelo**. Ninguno de los tres fallos requirió técnicas avanzadas para encontrarse; los tres requirieron mirar una estadística elemental de los datos que nadie había mirado. En este caso, la mediana de dos números que llevaban meses en el disco.
 
+### 4.7 Un ajuste que mejora los números y que decidimos no usar
 
-### 4.7 Calibrar el umbral: un resultado negativo, medido en serio
+> **En pocas palabras.** Existe un ajuste que sube el resultado a 0.9831, el mejor de todo el proyecto, y **no se usa**. Funciona por seis diezmilésimas de margen: acierta en estas sesenta fotografías por casualidad, no porque haya aprendido nada.
 
 Con el análisis por mosaicos funcionando, quedaba pendiente la última mejora «gratuita» del plan: mover el umbral de decisión. La §3.8 ya lo había intentado, pero eligiendo el umbral sobre las mismas fotos en las que después reportaba el resultado —circular, y allí se etiquetó como cota superior—. Aquí se hace bien, con `scripts/calibrar_umbral.py`.
 
@@ -761,8 +889,9 @@ Es un resultado negativo, y se documenta con el mismo detalle que uno positivo p
 
 Queda además una observación de fondo para §5: que 19 de 30 fotos den exactamente 1.0 significa que **las probabilidades del modelo no están calibradas**. Se pueden usar para ordenar, no para leerlas como grados de confianza. La interfaz muestra «Probabilidad de grieta: 100 %», y ese número no debe interpretarse como certeza — solo como «muy por encima del umbral».
 
+### 4.8 La decisión final: que elija la aplicación, no el usuario
 
-### 4.8 La decisión final: un modelo por modo, y ningún selector
+> **En pocas palabras.** Se retira el selector de modelo de la aplicación. Fotografía y vídeo tienen necesidades opuestas y cada una tiene una respuesta medida, así que la aplicación elige sola. De paso, una mejora anterior deja de estar justificada.
 
 Hasta esta fase la aplicación ofrecía un selector con tres modelos —ensemble, MobileNetV2 y TFLite int8— y dejaba la elección al usuario. Las mediciones de §4.6 y §4.7 permiten cerrar esa decisión, y el resultado es que **el selector desaparece**.
 
@@ -807,8 +936,9 @@ La aplicación indica en todo momento qué modelo está usando y por qué, y si 
 
 Ninguna de las tres necesitó una técnica avanzada. Las tres necesitaron medir la alternativa aburrida antes de aceptar la interesante.
 
+### 4.9 Entrenar con imágenes degradadas: la idea que no funcionó
 
-### 4.9 Degradación de escala en entrenamiento: la hipótesis que no se sostuvo
+> **En pocas palabras.** La continuación lógica del hallazgo de §4.6 se implementó, se midió con dos entrenamientos comparables y **no hizo absolutamente nada**. Se descartó tras una comprobación de 20 minutos, en lugar de gastar las dos horas del entrenamiento completo.
 
 §4.6 corrige el desajuste de escala en **inferencia**, troceando la fotografía, y eso cuesta 2.4× de tiempo. La continuación natural era atacarlo en **entrenamiento**: si el modelo aprende con grietas ya degradadas por una reducción fuerte, debería reconocerlas sin necesidad de trocear, y el coste se recuperaría.
 
@@ -876,7 +1006,6 @@ Lo que sí puede afirmarse es lo que decide la cuestión práctica: **con el pre
 Ambos modelos del experimento —entrenados con la **cuarta parte** de los datos y **un tercio** de las épocas— alcanzan sobre las fotos propias con mosaicos **F1 0.9524 y recall 1.00 (0 falsos negativos)**, frente al 0.9355 y recall 0.97 del modelo de producción, que vio cuatro veces más datos durante quince épocas.
 
 Es una diferencia de una sola fotografía y no debe leerse como que entrenar menos sea mejor. Pero apunta en la misma dirección que §3.4 y §3.8: **entrenar más ajusta mejor el dominio público y no necesariamente el real**. Queda anotado en §8 como línea de trabajo, con una advertencia: comprobarlo exigiría un criterio de parada que mire a las fotos propias, y usarlas para decidir cuándo parar las convertiría en conjunto de validación — perdiendo la única medida honesta de generalización que tiene el proyecto. El experimento tendría que diseñarse con mucho cuidado.
-
 
 ---
 
@@ -1018,7 +1147,9 @@ En orden de impacto esperado sobre la utilidad real del sistema:
 
 ## 9. Conclusión
 
-El proyecto entrega un sistema completo y funcional que combina aprendizaje profundo, visión clásica y un motor de reglas explicable, ejecutable en un equipo modesto y exportable a un teléfono.
+*Este cierre está escrito como dos listas: lo que el proyecto puede afirmar y lo que no. La segunda es tan importante como la primera.*
+
+El proyecto entrega un sistema completo y funcional que combina una red neuronal, geometría clásica y un conjunto de reglas explicables, capaz de ejecutarse en un computador corriente y de exportarse a un teléfono.
 
 Lo que **sí** puede afirmarse:
 
@@ -1044,3 +1175,68 @@ Lo que **no** puede afirmarse:
 - Que sea seguro usarlo como base para decidir si una edificación es habitable.
 
 La distancia entre ambas listas no es un defecto del trabajo: **es el trabajo**. Un proyecto de aprendizaje automático que solo reporta su exactitud está contando la mitad de la historia, y en un dominio donde el error se paga en vidas, la mitad que falta es la que importa.
+
+---
+
+## Glosario
+
+Todos los términos técnicos que aparecen en este informe, explicados en lenguaje corriente y en el sentido concreto que tienen aquí.
+
+### Sobre los errores y su medición
+
+| Término | Qué significa |
+|---|---|
+| **Falso negativo** | Hay grieta y el sistema dice que no. **Es el error grave**: una grieta que nadie va a revisar |
+| **Falso positivo** | No hay grieta y el sistema avisa. Cuesta una inspección innecesaria |
+| **Recall** | De todas las grietas que existen, qué proporción encuentra el sistema |
+| **Precisión** | De todas las veces que el sistema avisa, qué proporción son grietas de verdad |
+| **F1** | Un número que resume recall y precisión. Solo sube si suben ambos. Va de 0 a 1 |
+| **Exactitud** | Porcentaje de aciertos sobre el total. Engaña cuando una clase es mucho más frecuente que la otra |
+| **ROC-AUC** | Mide si el sistema distingue las clases *aunque* esté mal ajustado. 0.5 es adivinar al azar, 1.0 es perfecto |
+| **Matriz de confusión** | Tabla con los cuatro resultados posibles: acertó que sí, acertó que no, falso positivo y falso negativo |
+| **Umbral** | El nivel de confianza a partir del cual el sistema afirma que hay grieta. Bajarlo detecta más grietas y también más falsas alarmas |
+
+### Sobre el aprendizaje del modelo
+
+| Término | Qué significa |
+|---|---|
+| **Red neuronal** | Programa que aprende a reconocer patrones a partir de ejemplos, en lugar de seguir reglas escritas a mano |
+| **Transfer learning** | Partir de una red que ya aprendió a ver imágenes en general y reentrenarla para una tarea concreta. Ahorra datos y tiempo |
+| **Fine-tuning** | Segunda fase del transfer learning: se permite que también se ajusten las partes de la red que al principio se dejaron fijas |
+| **Línea base** | Una solución sencilla que sirve de punto de comparación. Si algo más complejo no la supera, no vale la pena |
+| **Época** | Una vuelta completa del entrenamiento a todas las imágenes disponibles |
+| **Sobreajuste** | Cuando un modelo memoriza los ejemplos en vez de aprender el patrón. Acierta en lo conocido y falla en lo nuevo |
+| **Aumento de datos** | Mostrarle al modelo variaciones artificiales de cada imagen (girada, más oscura…) para que aprenda a reconocer lo esencial |
+| **Ensemble** | Combinar las respuestas de varios modelos, con la idea de que unos compensen los fallos de otros |
+| **Validación cruzada** | Repartir los datos en grupos, decidir con unos y comprobar con otro. Evita hacerse trampas al medir |
+| **Fuga de datos** | Que material del examen se haya colado en el material de estudio. Infla los resultados sin que se note |
+
+### Sobre el despliegue y el rendimiento
+
+| Término | Qué significa |
+|---|---|
+| **Cuantización (int8)** | Guardar los números del modelo con menos detalle. Lo vuelve mucho más pequeño y rápido, a cambio de algo de precisión |
+| **TensorFlow Lite** | Formato de modelo pensado para funcionar en teléfonos y dispositivos pequeños |
+| **Latencia** | Tiempo que tarda el sistema en responder a una fotografía |
+| **CPU / GPU** | El procesador corriente de un computador, frente a la tarjeta gráfica. La segunda acelera mucho el entrenamiento, pero no todos la tienen |
+| **Complejidad `O(n)`** | Forma de escribir cómo crece el trabajo cuando crecen los datos. `O(n)` = el doble de datos, el doble de tiempo |
+
+### Sobre la parte de visión clásica
+
+| Término | Qué significa |
+|---|---|
+| **Desaplome** | Cuánto se desvía de la vertical un elemento que debería estar derecho |
+| **Detección de bordes (Canny)** | Método que localiza los puntos de la imagen donde el color cambia bruscamente: los contornos |
+| **Transformada de Hough** | Método que, a partir de esos contornos, encuentra cuáles forman líneas rectas |
+| **Píxel** | Cada uno de los puntos de color que componen una imagen digital |
+| **Redimensionar** | Cambiar el tamaño de una imagen. Al reducirla se pierde detalle de forma irreversible — **origen del hallazgo de §4.6** |
+
+### Sobre el conjunto de datos
+
+| Término | Qué significa |
+|---|---|
+| **Dataset** | El conjunto de imágenes usado para entrenar y evaluar |
+| **Entrenamiento / validación / prueba** | Las tres partes en que se reparten los datos: aprender, ajustar durante el desarrollo y examinar al final. Nunca se mezclan |
+| **Fuera de distribución** | Imágenes distintas de las que el modelo vio al aprender — por ejemplo, las fotografías propias del equipo |
+| **Sesgo del dataset** | Que las imágenes de entrenamiento no representen bien la realidad donde el sistema se va a usar |
+| **Semilla aleatoria** | Un número que fija el azar del programa, de modo que dos ejecuciones den siempre lo mismo |
