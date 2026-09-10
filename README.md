@@ -2,433 +2,372 @@
 
 **Evaluación de riesgo en edificaciones mediante visión por computador**
 
-Proyecto de la asignatura *Algoritmos y Programación* · Ingeniería en Inteligencia Artificial · Universidad Industrial de Santander · 2026-2
+Proyecto de la asignatura *Algoritmos y Programación* · Ingeniería en Inteligencia Artificial · Universidad Industrial de Santander · Semestre 2026-2
 
 ---
 
-## Qué hace
+## Para quien evalúa este trabajo
 
-A partir de **una sola fotografía** de un elemento estructural, el sistema responde tres preguntas y las combina en un juicio explicable:
+Este documento explica **qué hace el proyecto, cómo se construyó y qué se descubrió al medirlo**. Está pensado para leerse de principio a fin sin ejecutar nada; las instrucciones para ponerlo en marcha están agrupadas más abajo.
 
-| Pregunta | Módulo | Técnica |
-|---|---|---|
-| ¿Hay grieta? | `src/models/` | CNN — MobileNetV2 por transfer learning |
-| ¿Está a plomo? | `src/vision/` | Canny + transformada de Hough |
-| ¿Qué riesgo implica? | `src/risk/` | Motor de reglas con criterios NSR-10 |
+Si dispone de poco tiempo, estas son las secciones que concentran el trabajo:
 
-La salida no es solo un nivel de riesgo: viene con **la lista de reglas que lo dispararon** y el criterio de ingeniería que motiva cada una.
-
-Todo está pensado para **ejecutarse en equipos modestos**: entrada de 160×160, MobileNetV2 con `alpha=0.75` y exportación a TensorFlow Lite int8. La eficiencia se mide y se reporta, no se asume.
-
----
-
-## Instalación
-
-> **Requisito:** Python **3.10, 3.11 o 3.12**. TensorFlow 2.19 no publica ruedas para 3.13+. Si `python --version` te devuelve 3.13 o superior, usa el lanzador `py -3.11` como se muestra abajo.
-
-### Windows (PowerShell)
-
-```powershell
-cd crack-risk-assessment
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-Si PowerShell bloquea el script de activación con *"la ejecución de scripts está deshabilitada"*, habilítalos solo para tu usuario:
-
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-
-### Linux / macOS
-
-```bash
-cd crack-risk-assessment
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-### Verificar que todo quedó bien
-
-```bash
-python scripts/verificar_entorno.py
-```
-
-Debe terminar con `ENTORNO CORRECTO. Fase 0 superada.` Comprueba el intérprete, las doce dependencias críticas, la carga del `config.yaml`, la importación de todos los módulos y una prueba funcional de OpenCV, TensorFlow y el motor de reglas.
-
----
-
-## Configuración en VS Code
-
-El proyecto trae `.vscode/` versionado y listo:
-
-- **`settings.json`** — apunta al intérprete del `.venv`, activa **formateo al guardar con Black** (100 columnas), el linter **Ruff** y el descubrimiento de pruebas con pytest.
-- **`launch.json`** — doce configuraciones de depuración (`F5`), una por script, incluyendo **lanzar Streamlit desde el depurador**.
-- **`extensions.json`** — VS Code te ofrecerá instalar las extensiones necesarias al abrir la carpeta.
-
-Pasos:
-
-1. `File → Open Folder…` y abre `crack-risk-assessment/`.
-2. Acepta la instalación de las extensiones recomendadas.
-3. `Ctrl+Shift+P` → **Python: Select Interpreter** → elige el del `.venv`.
-4. Pulsa `F5` y selecciona una configuración de la lista.
-
-Todo se ejecuta **en local**. El proyecto no usa Google Colab ni ningún servicio en la nube.
-
----
-
-## Preparar los datos
-
-### Dataset público → `data/raw/`
-
-El cargador **detecta solo** cuál de las dos estructuras estás usando:
-
-```
-data/raw/                        data/raw/
-├── Positive/                    ├── labels.csv        (columnas: filename, label)
-│   ├── 00001.jpg          o     ├── img_00001.jpg
-│   └── ...                      └── ...
-└── Negative/
-    └── ...
-```
-
-Se aceptan variantes de nombre (`positive`, `crack`, `con_grieta`, `1`, …); están declaradas en `datos.alias_clases` de `config.yaml`. Si usas CSV con otros nombres de columna, ajusta `datos.csv`.
-
-### Fotos propias del equipo → `data/propias/`
-
-**Obligatorias.** Misma estructura que `data/raw/`. Son el conjunto de prueba final y **no participan nunca** en el entrenamiento ni en la selección de hiperparámetros.
-
-Protocolo de captura recomendado (detallado en el notebook de EDA):
-
-- 30–50 imágenes mínimo, con ambas clases.
-- Distancia de 0.5 a 1.5 m, cámara perpendicular a la superficie.
-- Variedad deliberada de luz: sol, sombra, interior.
-- Incluir **negativos difíciles** a propósito: juntas, cables, manchas de humedad.
-- Para la inclinometría, algunas fotos con la columna o el muro **completo** y su borde vertical visible de arriba abajo.
-
----
-
-## Flujo completo
-
-Ejecuta todo desde la **raíz del repositorio**, con el entorno activado.
-
-### 0 · Verificar el entorno
-
-```bash
-python scripts/verificar_entorno.py
-```
-
-### 1 · Análisis exploratorio
-
-Abre `notebooks/01_eda.ipynb` en VS Code, selecciona el kernel `.venv` y ejecuta las celdas. Genera las figuras en `reports/figuras/` y documenta los sesgos del dataset.
-
-### 2 · Ensayo rápido del pipeline (hazlo siempre primero)
-
-Antes de lanzar una corrida de horas en CPU, valida que todo funciona con el 5 % de los datos:
-
-```bash
-python scripts/train_transfer.py --config config.yaml --subset 0.05 --epochs 2 --epochs-ft 1
-```
-
-Si esto termina sin errores, el pipeline entero está bien y puedes lanzar la corrida larga con confianza.
-
-### 3 · Línea base (CNN propia desde cero)
-
-```bash
-python scripts/train_baseline.py --config config.yaml
-```
-
-### 4 · Transfer learning con MobileNetV2
-
-```bash
-python scripts/train_transfer.py --config config.yaml
-```
-
-Ejecuta dos etapas: base congelada y después fine-tuning de los últimos bloques con `lr=1e-5`. Guarda **ambos** modelos y **ambas** métricas para poder comparar cuánto aporta el fine-tuning.
-
-### 5 · Exportar a TensorFlow Lite
-
-```bash
-python scripts/export_tflite.py --config config.yaml
-```
-
-Produce `_float32.tflite` (control) e `_int8.tflite` (cuantización entera calibrada con imágenes reales del conjunto de entrenamiento).
-
-### 6 · Evaluar todo
-
-```bash
-python scripts/evaluate.py --config config.yaml
-```
-
-Evalúa línea base, MobileNetV2 y TFLite int8 sobre el conjunto de prueba **y por separado sobre las fotos propias**. Genera el análisis de falsos negativos, la curva precisión-recall, la búsqueda del umbral que garantiza el recall objetivo y la tabla comparativa desempeño-vs-costo. **Todos los artefactos que consume la aplicación salen de aquí.**
-
-### 7 · Validar la inclinometría
-
-```bash
-python scripts/validar_inclinacion.py --config config.yaml --imagenes data/propias --guardar-anotadas
-```
-
-Rota tus fotos ángulos conocidos (±2°, ±5°, ±10°) y comprueba que la estimación se desplaza exactamente ese ángulo. Es validación sin ground truth instrumentado.
-
-Necesita **al menos una foto con un elemento vertical largo, nítido y contrastado de arriba abajo** (una columna o la esquina de un muro, encuadrada entera). Si todas tus fotos son primeros planos de superficie, el script responderá que ninguna produjo una estimación fiable — y tendrá razón: sin una arista larga no hay nada que la transformada de Hough pueda votar.
-
-El límite `--max-imagenes` vale 200 por defecto. Si tienes más fotos que eso, el script **avisa** de cuántas deja fuera; súbelo para incluirlas todas. Conviene que las cubra todas porque los archivos se recorren en orden alfabético, y un límite corto procesaría solo las primeras subcarpetas.
-
-### 7 bis · Medir el efecto del análisis por mosaicos
-
-```bash
-python scripts/evaluar_mosaicos.py --config config.yaml
-```
-
-Compara analizar la fotografía entera con trocearla en ventanas del tamaño con el que se entrenó el modelo. Sobre 60 fotos propias sube el recall de **0.80 a 0.97** sin reentrenar nada: una foto de teléfono se reduce 7.5 veces para entrar al modelo, y una fisura fina no sobrevive a esa reducción. El razonamiento completo está en `reports/analisis.md` §4.6.
-
-El troceado viene activado por defecto en la aplicación y se puede desactivar o reajustar desde la barra lateral.
-
-### 7 ter · Comprobar si conviene mover el umbral
-
-```bash
-python scripts/calibrar_umbral.py --config config.yaml
-```
-
-Elige la regla de decisión con **validación cruzada estratificada**, no sobre las mismas fotos en las que después la mide. El resultado fue negativo y está documentado en §4.7: el umbral que parece óptimo (0.998, F1 0.9831) pasa a 0.0006 del peor negativo, así que **se mantiene el 0.5 fijo**. Un resultado negativo medido bien vale tanto como uno positivo.
-
-### 7 quater · Qué modelo usa cada modo
-
-La aplicación **no tiene selector de modelo**: elige ella, porque la respuesta está medida (§4.8).
-
-| Modo | Modelo | Por qué |
-|---|---|---|
-| Fotografía | MobileNetV2 + mosaicos | Manda el acierto: F1 0.936, recall 0.97 |
-| Vídeo en vivo | TFLite int8 | Manda la latencia: 4.9 ms, lo único que sostiene 30 FPS |
-
-El ensemble sigue en `config.yaml` y en el comparador de latencias, pero ya no se ofrece: con mosaicos solo aporta +0.015 de F1 —un falso positivo de sesenta— por un 26 % más de tiempo. Si falta el artefacto esperado, la app repliega a otro y lo advierte.
-
-### 7 quinquies · Degradación de escala: probada y descartada
-
-El trabajo futuro nº 2 del informe se implementó y **se ejecutó**. El resultado fue negativo y está en §4.9: los modelos entrenados con y sin degradación de escala emiten **predicciones idénticas** en las 60 fotografías propias (McNemar p = 1.000). El troceado de §4.6 sigue siendo necesario.
-
-La capa queda en el repositorio, desactivada, junto al experimento que la desaconseja. Para reproducirlo (unos 20 min, dos entrenamientos pareados):
-
-```bash
-python scripts/train_transfer.py --config config.yaml --subset 0.25 --epochs 3 --epochs-ft 2 --nombre escala_control
-```
-
-```bash
-python scripts/train_transfer.py --config config.yaml --subset 0.25 --epochs 3 --epochs-ft 2 --nombre escala_degradado --degradacion-escala 4.0
-```
-
-```bash
-python scripts/evaluar_mosaicos.py --config config.yaml --formato keras --modelo models/escala_degradado_finetuned.keras --lados 480
-```
-
-`--nombre` cambia el nombre de **todos** los artefactos, así que ningún experimento sobrescribe `models/mobilenetv2_finetuned.keras`.
-
-### 8 · Lanzar la aplicación
-
-```bash
-streamlit run app/app.py
-```
-
-Se abre en `http://localhost:8501`.
-
-### 9 · Pruebas
-
-```bash
-pytest tests -v
-```
-
----
-
-## Entrenar en CPU
-
-El proyecto asume que **puedes no tener GPU**. Windows nativo, además, no soporta GPU en TensorFlow desde la versión 2.11 (solo vía WSL2), así que entrenar en CPU es el caso normal, no la excepción.
-
-Herramientas incluidas para que eso sea viable:
-
-| Herramienta | Cómo se usa |
+| Si le interesa… | Vaya a |
 |---|---|
-| **Submuestreo** | `--subset 0.1` valida el pipeline completo en minutos |
-| **Checkpoint por época** | Se guarda en `models/checkpoints/` al final de **cada** época |
-| **Reanudación** | `--resume` continúa desde la época exacta en que se interrumpió |
-| **Resolución modesta** | 160×160 en vez de 224×224: la mitad de cómputo |
-| **`alpha=0.75`** | 39 % menos parámetros en la base de MobileNetV2 |
-| **Detección de dispositivo** | Cada script informa si usa CPU o GPU al arrancar |
-| **Tiempo por época + ETA** | Se imprime en cada época y se guarda en `reports/metricas/` |
+| Qué hace el sistema y qué tan bien funciona | [Qué hace](#qué-hace-el-sistema) y [Resultados](#resultados-medidos) |
+| El análisis crítico y los hallazgos | [Lo que se descubrió al medir](#lo-que-se-descubrió-al-medir) |
+| El informe completo | [`reports/analisis.md`](reports/analisis.md) |
+| Ejecutarlo | [Cómo ponerlo en marcha](#cómo-ponerlo-en-marcha) |
 
-Ejemplos:
-
-```bash
-# Ensayo de 5 minutos
-python scripts/train_transfer.py --config config.yaml --subset 0.05 --epochs 2
-
-# Se cortó la luz a mitad de la corrida larga
-python scripts/train_transfer.py --config config.yaml --resume
-
-# Lote más pequeño si la RAM se queda corta
-python scripts/train_transfer.py --config config.yaml --batch-size 16
-```
-
-**Sobre la resolución.** 160×160 conserva la firma de una grieta fina (bordes de alta frecuencia, 2–4 px de ancho) y cuesta la mitad que 224×224, porque el costo de una convolución es cuadrático en el lado de la imagen: (160/224)² = 0.51. Bajar a 128×128 ahorraría otro 36 %, pero las fisuras capilares empiezan a perderse por submuestreo, y un falso negativo es el error caro de este dominio. 160 es el punto de equilibrio.
+Al final hay un [glosario](#pequeño-glosario) con los términos técnicos explicados en lenguaje corriente.
 
 ---
 
-## Estructura del repositorio
+## El problema
 
-```
-crack-risk-assessment/
-├── README.md
-├── requirements.txt              # dependencias directas, versiones fijadas
-├── requirements-lock.txt         # árbol completo resuelto (reproducibilidad exacta)
-├── pyproject.toml                # configuración de Black, Ruff y pytest
-├── config.yaml                   # ← rutas, hiperparámetros y umbrales de riesgo
-├── .gitignore
-├── .vscode/
-│   ├── settings.json             # intérprete, Black, Ruff, pytest
-│   ├── launch.json               # 12 configuraciones de depuración
-│   └── extensions.json
-├── .streamlit/config.toml        # tema base de la interfaz
-├── notebooks/
-│   └── 01_eda.ipynb              # único notebook; importa de src/
-├── scripts/                      # todo ejecutable por CLI con argparse
-│   ├── verificar_entorno.py
-│   ├── train_baseline.py
-│   ├── train_transfer.py
-│   ├── evaluate.py
-│   ├── export_tflite.py
-│   ├── validar_inclinacion.py
-│   ├── analizar_fuga_datos.py    # duplicados entre particiones (pHash + correlación)
-│   ├── evaluar_robustez.py       # TTA, ensemble y recalibración del umbral
-│   ├── evaluar_mosaicos.py       # imagen entera vs. análisis por ventanas
-│   └── calibrar_umbral.py        # umbral con validación cruzada, sin oráculo
-├── src/
-│   ├── utils/                    # rutas, config, semillas, dispositivo
-│   ├── data/loader.py            # carga, split, augmentation
-│   ├── models/
-│   │   ├── baseline.py           # CNN propia
-│   │   ├── transfer.py           # MobileNetV2
-│   │   ├── entrenamiento.py      # callbacks y reanudación compartidos
-│   │   └── inferencia.py         # interfaz común .keras / .tflite
-│   ├── vision/inclinacion.py     # Canny + Hough
-│   ├── risk/reglas.py            # motor de reglas (función pura)
-│   └── eval/
-│       ├── metricas.py           # desempeño
-│       └── complejidad.py        # parámetros, tamaño, latencia, memoria
-├── app/
-│   ├── app.py                    # Streamlit
-│   └── estilos.py                # CSS y paleta
-├── tests/
-│   ├── test_reglas.py
-│   └── test_inclinacion.py
-├── models/                       # .keras y .tflite (no versionados)
-├── data/                         # dataset y fotos propias (no versionado)
-└── reports/
-    ├── analisis.md               # análisis crítico
-    ├── figuras/
-    └── metricas/                 # JSON/CSV que consume la app
-```
+Después de un sismo, o simplemente con el paso de los años, las edificaciones desarrollan grietas y se inclinan. Distinguir una fisura inofensiva de una que anuncia un problema estructural requiere un ingeniero, y no siempre hay uno disponible cuando hace falta revisar muchas viviendas en poco tiempo.
 
-### Reglas de arquitectura que el proyecto respeta
+Este proyecto construye una **herramienta de tamizaje**: a partir de una fotografía tomada con un teléfono corriente, señala qué elementos merecen la visita de un profesional y cuáles probablemente no. No reemplaza al ingeniero — le ayuda a decidir por dónde empezar.
 
-- **Un solo notebook**, y solo para EDA. Importa de `src/`, no define lógica.
-- **Todo lo que entrena, evalúa o exporta es un script con `argparse`.**
-- **Cero rutas absolutas.** Todo se construye con `pathlib` desde `src/utils/rutas.py`, relativo a la raíz del repositorio.
-- **Cero variables globales mutables.** Los parámetros se pasan como argumentos.
-- **Cero valores incrustados.** Cada umbral, hiperparámetro y ruta vive en `config.yaml`.
-- **Semillas en un único sitio** (`src/utils/semillas.py`), invocadas al inicio de cada script.
-- **La app no calcula métricas.** Lee artefactos de `reports/metricas/`.
+---
+
+## Qué hace el sistema
+
+A partir de **una sola fotografía**, el sistema responde tres preguntas y las combina en un juicio que puede explicarse:
+
+| Pregunta | Cómo la responde | En qué consiste |
+|---|---|---|
+| **¿Hay una grieta?** | Una red neuronal | El computador aprendió a reconocer grietas viendo cuarenta mil fotografías ya etiquetadas |
+| **¿Está derecho el elemento?** | Geometría clásica | Se detectan los bordes rectos de la imagen y se mide cuánto se desvían de la vertical |
+| **¿Qué riesgo implica?** | Un conjunto de reglas | Reglas escritas a mano, inspiradas en la norma colombiana NSR-10 |
+
+La diferencia frente a un sistema que solo diga «riesgo alto» es que aquí **la respuesta viene con sus motivos**: la aplicación muestra qué reglas se activaron y qué criterio de ingeniería respalda cada una. Quien recibe el resultado puede discutirlo, no solo aceptarlo.
+
+### Por qué tres módulos y no uno solo
+
+Se podría haber entrenado una única red neuronal que dijera directamente «riesgo alto» o «riesgo bajo». Se descartó por dos razones:
+
+1. **No habría forma de explicar sus decisiones.** Una red neuronal es una caja opaca; un conjunto de reglas se puede leer, discutir y corregir.
+2. **No habría forma de ajustarla sin volver a entrenarla.** Si un ingeniero considera que el límite de inclinación debería ser 1.5° en vez de 2°, aquí se cambia una línea en un archivo de texto. Con una red neuronal habría que reentrenar desde cero.
+
+---
+
+## Resultados medidos
+
+### Detección de grietas
+
+| Qué se midió | Resultado | Qué significa |
+|---|---|---|
+| **Acierto general (F1)** | **0.9423** | Resume en un número cuántas grietas encuentra y cuántas veces se equivoca al avisar. Va de 0 a 1 |
+| Grietas que sí detecta | 90.7 % | De cada 100 grietas reales, encuentra unas 91 |
+| Tiempo por fotografía | **4.82 milisegundos** | Unas 207 fotografías por segundo, en un computador corriente sin tarjeta gráfica |
+| Tamaño del modelo | **1.74 MB** | Cabe holgadamente en un teléfono |
+
+Ese modelo comprimido para teléfono es **30.8 veces más rápido y 8 veces más pequeño** que la versión original, sin perder acierto de forma apreciable.
+
+### Medición de inclinación
+
+| Qué se midió | Resultado |
+|---|---|
+| Error al medir el ángulo | **0.039°** — trece veces mejor que el criterio de aceptación |
+| Fotografías en las que consigue medir | **1 de cada 40** |
+
+La segunda cifra es incómoda y se reporta igual. El módulo es **muy preciso cuando funciona, y funciona pocas veces**: necesita ver el borde vertical completo de una columna o un muro, y la mayoría de las fotografías son primeros planos de la superficie. Reportar solo el 0.039° habría sido contar media historia.
+
+### Costo de construirlo
+
+**4 horas y 5 minutos** de cómputo en un portátil corriente, sin tarjeta gráfica, para entrenar los tres modelos. El proyecto está diseñado para reproducirse sin infraestructura especial.
+
+---
+
+## Lo que se descubrió al medir
+
+Esta es la parte del trabajo que el equipo considera más valiosa. Son cuatro hallazgos, y **dos de ellos son negativos**: mejoras que parecían buenas y que las mediciones obligaron a descartar.
+
+### 1. El conjunto de datos público estaba contaminado
+
+Los datos públicos vienen divididos en dos partes: una para que el modelo aprenda y otra, apartada, para examinarlo. La segunda solo sirve si contiene imágenes que el modelo nunca vio.
+
+Al comprobarlo, resultó que **el 15.27 % de las imágenes del examen ya estaban en el material de estudio**. El modelo las acertaba todas — no porque hubiera aprendido, sino porque las recordaba. Es el equivalente a examinar a un estudiante con las preguntas que ya le dieron resueltas.
+
+Todas las cifras de este documento están calculadas **después** de retirar esas imágenes repetidas. Son más bajas que las que saldrían sin depurar, y son las honestas.
+
+### 2. El problema no estaba en el modelo, estaba en cómo le entregábamos las fotos
+
+El modelo funcionaba bien con las fotografías del conjunto público y mucho peor con las que tomó el equipo. La explicación que se dio por buena durante semanas fue que las paredes colombianas son distintas: otro material, otra luz, otra cámara.
+
+Al medir algo que nadie había mirado —**el tamaño de las imágenes**— apareció otra explicación:
+
+| Origen | Tamaño típico | Cuánto se encoge al entrar al modelo |
+|---|---|---|
+| Fotos de entrenamiento | 227 × 227 píxeles | Se reduce 1.4 veces |
+| Fotos del equipo | 1200 × 1600 píxeles | **Se reduce 7.5 veces** |
+
+El modelo trabaja con imágenes de 160 × 160 píxeles, así que toda fotografía se encoge antes de entrar. Una grieta de 3 píxeles de ancho sobrevive como 2 píxeles en el primer caso, pero queda en **0.4 píxeles** en el segundo: desaparece. **La grieta no se le escapaba al modelo — la borrábamos nosotros antes de enseñársela.**
+
+La solución no exige volver a entrenar nada: se trocea la fotografía en ventanas y se analiza cada una por separado, de modo que cada trozo llega al modelo a un tamaño reconocible.
+
+| | Grietas que detecta | Grietas que se le escapan |
+|---|---|---|
+| Antes (fotografía completa) | 80 % | 6 de 30 |
+| **Después (por ventanas)** | **97 %** | **1 de 30** |
+
+El precio también se reporta: aparecen 2 falsas alarmas donde antes no había ninguna, y cada fotografía tarda 0.78 segundos en vez de 0.32. En este dominio es el intercambio correcto — una falsa alarma cuesta una visita de inspección; una grieta no detectada puede costar vidas.
+
+Como beneficio no buscado, el troceado indica **en qué parte de la fotografía** está la grieta, algo que antes era imposible saber.
+
+### 3. Existe un ajuste que mejora los números, y no se usa
+
+El sistema decide «hay grieta» cuando su confianza supera cierto nivel. Ajustar ese nivel no cuesta nada y parecía la última mejora fácil.
+
+Buscándolo bien, aparece uno que sube el acierto de 0.9355 a **0.9831** — el mejor número de todo el proyecto. **Se descartó.**
+
+El motivo: ese nivel de corte pasa a **seis diezmilésimas** de la fotografía sana peor clasificada. No separa dos categorías, separa dos fotografías concretas de una muestra de sesenta. Cualquier foto nueva con una junta un poco más marcada caería del otro lado.
+
+Se probó además una alternativa que parecía más sólida —exigir que la grieta aparezca en varias ventanas y no en una sola— y, midiéndola correctamente, resultó **peor que no hacer nada**.
+
+Se mantiene el valor original. Un 0.9831 que no se sostiene vale menos que un 0.9355 que sí.
+
+### 4. La continuación lógica no funcionó
+
+Si el problema era que las grietas se destruyen al encoger la imagen, lo natural era entrenar el modelo mostrándole grietas ya encogidas, para que aprendiera a reconocerlas así. Se implementó y se probó con dos entrenamientos idénticos salvo por esa diferencia.
+
+Resultado: los dos modelos dan **exactamente las mismas respuestas** en las 60 fotografías, y la prueba estadística arroja el resultado menos significativo posible. La idea, sencillamente, no hace nada.
+
+Se descartó antes de gastar las 2 horas del entrenamiento completo, gracias a una comprobación de 20 minutos diseñada justamente para eso.
+
+### El patrón que une los cuatro
+
+En los cuatro casos la conclusión salió de **comparar contra la alternativa aburrida antes de aceptar la interesante**. Ninguno necesitó una técnica avanzada; todos necesitaron mirar una cifra elemental que nadie había mirado.
 
 ---
 
 ## La aplicación
 
-Tres pestañas:
+Se ejecuta en el navegador y tiene cuatro pestañas.
 
-**🔍 Análisis en vivo** — Carga la foto y ejecuta el pipeline completo con barra de progreso por etapas reales (carga → preprocesado → clasificación → inclinometría → reglas). Muestra probabilidad de grieta, ángulo de desaplome, orientación de la fisura y tiempo de inferencia medido; original y procesada lado a lado en columnas de igual ancho; semáforo de riesgo con las reglas que lo justifican.
+**🔍 Análisis en vivo.** Se carga una fotografía y se obtiene el resultado completo: probabilidad de grieta, ángulo de inclinación, orientación de la fisura y el semáforo de riesgo con las reglas que lo justifican. Muestra la imagen original y la procesada lado a lado, y señala con recuadros en qué zona encontró la evidencia.
 
-**📊 Métricas del modelo** — Matriz de confusión, curvas de entrenamiento, curva precisión-recall y tabla comparativa desempeño-vs-costo, todo con Plotly interactivo y **leído de `reports/metricas/`**.
+**📹 Cámara en vivo.** Analiza en tiempo real lo que ve la cámara, con el vídeo y el veredicto de riesgo uno al lado del otro. Puede usar la cámara del computador o **la del teléfono a través de la red local**, que es lo práctico para caminar por una edificación.
 
-**ℹ️ Acerca del proyecto** — Problema, enfoque, dataset, limitaciones, equipo y umbrales vigentes.
+**📊 Métricas del modelo.** Gráficas interactivas del desempeño. La aplicación **no calcula estas cifras**: las lee de archivos generados por los programas de evaluación, de modo que lo que aparece en pantalla es exactamente lo que se midió.
 
-En la barra lateral: carga de imagen, elemento inspeccionado, **selector `.keras` / `.tflite` con comparación de latencia en vivo**, ficha técnica del modelo y cinco controles de sensibilidad de OpenCV que alteran el resultado en tiempo real, inicializados con los valores de `config.yaml`.
+**ℹ️ Acerca del proyecto.** Problema, enfoque, limitaciones y equipo.
 
-**Accesibilidad:** el semáforo nunca depende solo del color. Cada nivel lleva icono (`✓ ▲ ✕`) y etiqueta de texto — entre el 5 y el 8 % de los hombres tiene alguna deficiencia en la visión del rojo y el verde, y en un panel de seguridad eso no es un detalle estético.
+**Sobre accesibilidad:** el semáforo de riesgo nunca depende solo del color. Cada nivel lleva icono (`✓ ▲ ✕`) y etiqueta escrita, porque entre el 5 y el 8 % de los hombres tiene alguna dificultad para distinguir el rojo del verde, y en un panel de seguridad eso no es un detalle estético.
+
+### Qué modelo usa y por qué no hay que elegirlo
+
+La aplicación **no pregunta qué modelo usar**: lo decide sola, porque la respuesta está medida y no depende de la preferencia de nadie.
+
+| Situación | Modelo que usa | Motivo |
+|---|---|---|
+| Analizar una fotografía | El más preciso | Se admite medio segundo de cálculo, así que manda el acierto |
+| Vídeo en vivo | El más rápido | Hay 33 milésimas de segundo por imagen; ningún otro cabe en ese margen |
+
+Ofrecer un selector parecía más flexible, pero trasladaba al usuario una decisión que no puede tomar bien: para elegir con criterio habría que conocer las cifras de acierto y velocidad de cada opción, que están en el informe y no en la pantalla.
 
 ---
 
-## Ajustar la configuración
+## Cómo ponerlo en marcha
 
-Todo vive en `config.yaml`. Los ajustes que más se tocan:
+> **Requisito previo:** Python **3.10, 3.11 o 3.12**. La librería TensorFlow todavía no funciona con la versión 3.13 o superior.
 
-```yaml
-preproceso:
-  alto: 160            # ↓ para entrenar más rápido, ↑ para detectar fisuras más finas
-  ancho: 160
-  barajar_buffer: 2000 # ventana de barajado de tf.data (ver nota abajo)
-  cache: false         # true solo si el dataset cacheado cabe en RAM (ver nota abajo)
+### 1. Preparar el entorno
 
-entrenamiento:
-  batch_size: 32       # ↓ a 16 u 8 si la RAM se queda corta
-  epocas: 20
+**En Windows (PowerShell)**
 
-datos:
-  split:
-    agrupar_por_origen: false   # ← ponlo en true si el dataset son recortes
-    regex_origen: "^([A-Za-z]+[_-]?\\d+)"
-
-evaluacion:
-  umbral: 0.5          # ↓ a ~0.3 para priorizar recall (menos falsos negativos)
-
-riesgo:
-  desaplome_atencion_grados: 1.0
-  desaplome_severo_grados: 2.0
+```powershell
+py -3.11 -m venv .venv
 ```
 
-**Fuga de datos:** si tu dataset son parches recortados de un número reducido de fotografías madre, el reparto aleatorio pondrá parches casi idénticos en entrenamiento y en prueba, y la exactitud saldrá irrealmente alta. Activa `agrupar_por_origen: true` y ajusta `regex_origen` al patrón real de tus nombres de archivo. El notebook de EDA incluye una celda que estima ese riesgo.
-
-**`cache`: calcula si te cabe antes de activarlo.** `cache: true` guarda en RAM las imágenes ya decodificadas y redimensionadas, lo que acelera mucho a partir de la segunda época — **si caben**. La cuenta es directa:
-
-```
-bytes = (n_train + n_val) × alto × ancho × 3 × 4
+```powershell
+.\.venv\Scripts\Activate.ps1
 ```
 
-Con 49 417 imágenes a 160×160 eso son **15.2 GB**. En un equipo de 16 GB no cabe, Windows empieza a paginar a disco y cada época se vuelve *más lenta* que sin caché. Si la suma se acerca a tu RAM libre, déjalo en `false`: se vuelve a decodificar cada época, pero `prefetch` y `num_parallel_calls` lo solapan con el cómputo y el tiempo es predecible.
+```powershell
+pip install -r requirements.txt
+```
 
-**`barajar_buffer`: no lo bajes.** `tf.data` solo mezcla dentro de una ventana deslizante de ese tamaño. El inventario se baraja ya en Python al hacer el split (`src/data/loader.py`, función `dividir`), así que este buffer solo aporta variación entre épocas y 2000 basta. **Pero si modificas el cargador y el inventario vuelve a quedar ordenado por clase**, un buffer de 2000 sobre 40 000 imágenes hará que el modelo vea cientos de lotes seguidos de una sola clase, colapse a predecir siempre la última que vio y dé `val_auc = 0.5` con una exactitud de entrenamiento del 99 %. Es un fallo silencioso: no lanza ningún error.
+**En Linux o macOS**
+
+```bash
+python3.11 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+```
+
+Y una comprobación de que todo quedó bien instalado:
+
+```bash
+python scripts/verificar_entorno.py
+```
+
+### 2. Colocar las imágenes
+
+El repositorio no incluye las fotografías, porque pesan demasiado. Se necesitan dos conjuntos, en carpetas separadas por clase:
+
+```
+data/raw/          ← dataset público, para entrenar
+├── Positive/      ← imágenes con grieta
+└── Negative/      ← imágenes sin grieta
+
+data/propias/      ← fotografías del equipo, para el examen final
+├── Positive/
+└── Negative/
+```
+
+Las fotografías propias son **60 imágenes tomadas por el equipo** y cumplen una función que el dataset público no puede cumplir: son el único material que el modelo no ha visto en ninguna forma. **Nunca se usan para entrenar ni para tomar decisiones de diseño** — en cuanto se usaran para decidir algo dejarían de ser una medida honesta.
+
+### 3. Ejecutar la aplicación
+
+Si los modelos ya están entrenados (hay archivos en la carpeta `models/`), basta con:
+
+```bash
+streamlit run app/app.py
+```
+
+### 4. Reconstruirlo todo desde cero
+
+Solo si se desea reproducir el proceso completo. Se ejecuta desde la carpeta raíz del proyecto, en este orden:
+
+```bash
+python scripts/train_baseline.py --config config.yaml
+```
+
+```bash
+python scripts/train_transfer.py --config config.yaml
+```
+
+```bash
+python scripts/export_tflite.py --config config.yaml
+```
+
+```bash
+python scripts/evaluate.py --config config.yaml
+```
+
+En un portátil sin tarjeta gráfica esto toma unas **4 horas**. Para comprobar antes que todo encaja, hay un ensayo de cinco minutos que recorre el proceso completo con una fracción de los datos:
+
+```bash
+python scripts/train_transfer.py --config config.yaml --subset 0.05 --epochs 2 --epochs-ft 1
+```
+
+Y si el entrenamiento largo se interrumpe (se cierra el portátil, se va la luz), continúa exactamente donde quedó:
+
+```bash
+python scripts/train_transfer.py --config config.yaml --resume
+```
+
+### 5. Reproducir los experimentos del análisis
+
+Cada hallazgo de la sección anterior tiene su propio programa, y cada uno puede ejecutarse por separado:
+
+| Hallazgo | Comando |
+|---|---|
+| Imágenes repetidas entre estudio y examen | `python scripts/analizar_fuga_datos.py --config config.yaml` |
+| Análisis por ventanas | `python scripts/evaluar_mosaicos.py --config config.yaml` |
+| Ajuste del nivel de corte | `python scripts/calibrar_umbral.py --config config.yaml` |
+| Medición de la inclinación | `python scripts/validar_inclinacion.py --config config.yaml --imagenes data/propias` |
+
+### 6. Ejecutar las pruebas automáticas
+
+```bash
+pytest tests -v
+```
+
+Son **160 pruebas** que verifican el comportamiento del sistema:
+
+| Archivo | Pruebas | Qué comprueba |
+|---|---|---|
+| `test_inclinacion.py` | 45 | Medición de ángulos y sus casos límite |
+| `test_camara.py` | 42 | Vídeo en tiempo real y presentación en pantalla |
+| `test_reglas.py` | 33 | Motor de riesgo, incluida la coherencia entre niveles |
+| `test_mosaicos.py` | 29 | Troceado de imágenes y elección automática de modelo |
+| `test_degradacion.py` | 11 | El experimento descartado del hallazgo 4 |
+
+---
+
+## Cómo está organizado el código
+
+```
+crack-risk-assessment/
+├── config.yaml         ← TODOS los ajustes del proyecto viven aquí
+├── README.md
+├── requirements.txt    ← librerías necesarias, con versiones exactas
+│
+├── src/                ← la lógica del proyecto
+│   ├── data/           ·  leer imágenes y repartirlas en grupos
+│   ├── models/         ·  las redes neuronales y cómo se usan
+│   ├── vision/         ·  medición de ángulos y manejo de la cámara
+│   ├── risk/           ·  las reglas de riesgo
+│   ├── eval/           ·  cálculo de métricas y de costo computacional
+│   └── utils/          ·  rutas, configuración, semillas aleatorias
+│
+├── scripts/            ← programas ejecutables desde la terminal
+├── app/                ← la aplicación web
+├── tests/              ← las 160 pruebas automáticas
+├── notebooks/          ← exploración inicial de los datos
+├── reports/            ← el informe y las cifras medidas
+│   ├── analisis.md     ·  ANÁLISIS CRÍTICO COMPLETO
+│   ├── metricas/       ·  cifras en bruto que la aplicación lee
+│   └── figuras/        ·  gráficas
+│
+├── models/             ← modelos entrenados (no se versionan: pesan mucho)
+└── data/               ← imágenes (no se versionan)
+```
+
+### Reglas que el proyecto se impuso
+
+Estas restricciones se decidieron al comenzar y se respetaron durante todo el desarrollo:
+
+- **Un único notebook**, y solo para explorar los datos. Toda la lógica vive en `src/`.
+- **Todo lo que entrena o evalúa es un programa de terminal**, con sus opciones documentadas.
+- **Ninguna ruta de archivo escrita a mano.** Todas se construyen a partir de la carpeta raíz, de modo que el proyecto funciona en cualquier computador sin retocar nada.
+- **Ningún número suelto dentro del código.** Cada umbral y cada parámetro está en `config.yaml`, acompañado de un comentario que explica por qué tiene ese valor y no otro.
+- **La aplicación no calcula métricas, las lee.** Así es imposible que la pantalla muestre cifras distintas de las que se midieron.
 
 ---
 
 ## Reproducibilidad
 
-- Semilla global única en `config.yaml` (`proyecto.semilla: 42`), propagada a `random`, NumPy y TensorFlow desde `src/utils/semillas.py`.
-- Versiones fijadas con `==` en `requirements.txt`; árbol completo en `requirements-lock.txt`.
-- Splits deterministas: misma semilla, mismo reparto.
-- Cada corrida guarda su resumen en `reports/metricas/entrenamiento_*.json` con hiperparámetros, tiempos por época y hardware usado.
+Un resultado que no se puede repetir no es un resultado. El proyecto toma cuatro medidas para que cualquiera obtenga lo mismo:
 
-Para determinismo bit a bit (a costa de velocidad), llama a `fijar_semillas(42, determinismo_estricto=True)`.
-
----
-
-## Aviso
-
-Este es un **prototipo académico de tamizaje**. No sustituye la inspección de un ingeniero estructural matriculado ni constituye un dictamen técnico bajo la NSR-10.
-
-El sistema **no puede medir el ancho real de una grieta** sin una referencia métrica en la escena, y el ancho de fisura es precisamente el criterio que usa la norma. Las limitaciones, los sesgos del dataset y las implicaciones éticas están desarrollados en [`reports/analisis.md`](reports/analisis.md).
+- **Una única semilla aleatoria** (el número 42, declarado en `config.yaml`) que se propaga a todas las librerías. El azar del entrenamiento es siempre el mismo azar.
+- **Versiones de librerías fijadas exactamente**, no «la más reciente disponible».
+- **Reparto de datos determinista**: la misma semilla produce siempre la misma división entre entrenamiento y examen.
+- **Cada entrenamiento deja su registro** en `reports/metricas/`, con los parámetros usados, el tiempo por vuelta y el equipo en el que corrió.
 
 ---
 
-## Commits sugeridos por fase
+## Advertencia sobre el alcance
 
-```
-feat(fase0): andamiaje del proyecto, entorno y configuración reproducible
-feat(fase1): carga de datos, split estratificado y notebook de EDA
-feat(fase2): CNN de línea base entrenada desde cero
-feat(fase3): transfer learning con MobileNetV2 y fine-tuning en dos etapas
-feat(fase4): inclinometría con Canny + Hough y validación por rotaciones
-feat(fase5): métricas, análisis de complejidad y motor de reglas de riesgo
-feat(fase6): aplicación Streamlit con panel interactivo y exportación TFLite
-docs(fase7): análisis crítico, limitaciones e implicaciones éticas
-```
+Este es un **prototipo académico de tamizaje**. No sustituye la inspección de un ingeniero estructural matriculado ni constituye un dictamen técnico bajo la norma NSR-10.
+
+Hay una limitación de fondo que conviene entender: **el sistema no puede medir el ancho real de una grieta** a partir de una fotografía si no hay en la escena algún objeto de tamaño conocido que sirva de referencia — y el ancho de la fisura es precisamente el criterio que la norma usa para dictaminar. El sistema dice *dónde mirar*, no *qué concluir*.
+
+Las limitaciones completas, los sesgos del conjunto de datos y las implicaciones éticas están desarrollados en [`reports/analisis.md`](reports/analisis.md).
+
+---
+
+## Pequeño glosario
+
+Los términos que aparecen en el informe, en lenguaje corriente:
+
+| Término | Qué significa aquí |
+|---|---|
+| **Falso negativo** | Hay grieta y el sistema dice que no. **Es el error caro**: una grieta que nadie va a revisar |
+| **Falso positivo** | No hay grieta y el sistema avisa. Cuesta una inspección innecesaria |
+| **Recall** | De todas las grietas que existen, qué proporción encuentra el sistema |
+| **Precisión** | De todas las veces que el sistema avisa, qué proporción son grietas de verdad |
+| **F1** | Un solo número que resume recall y precisión. Sube cuando ambos suben |
+| **Transfer learning** | Partir de una red que ya aprendió a ver imágenes en general y reentrenarla para grietas. Ahorra datos y tiempo |
+| **Umbral** | El nivel de confianza a partir del cual el sistema afirma que hay grieta. Bajarlo detecta más grietas y también más falsas alarmas |
+| **Cuantización (int8)** | Guardar los números del modelo con menos detalle. Lo vuelve mucho más pequeño y rápido, a cambio de algo de precisión |
+| **Desaplome** | Cuánto se desvía de la vertical un elemento que debería estar derecho |
+| **Sobreajuste** | Cuando un modelo memoriza los ejemplos en vez de aprender el patrón. Acierta en lo conocido y falla en lo nuevo |
+| **Época** | Una vuelta completa del entrenamiento a todas las imágenes disponibles |
+
+---
+
+## Equipo
+
+Proyecto desarrollado por Santiago Gómez García y equipo para la asignatura *Algoritmos y Programación*, Ingeniería en Inteligencia Artificial, Universidad Industrial de Santander, semestre 2026-2.
