@@ -1,0 +1,189 @@
+{
+  "formato": "tflite",
+  "umbral": 0.5,
+  "solape": 0.5,
+  "tamanos": {
+    "n": 60,
+    "alto_mediano": 1600,
+    "ancho_mediano": 1200,
+    "factor_reduccion_mediano": 7.5
+  },
+  "resultados": [
+    {
+      "estrategia": "imagen_entera",
+      "lado": null,
+      "lado_efectivo": null,
+      "metricas": {
+        "umbral": 0.5,
+        "n_muestras": 60,
+        "accuracy": 0.8166666666666667,
+        "precision": 1.0,
+        "recall": 0.6333333333333333,
+        "f1": 0.7755102040816326,
+        "especificidad": 1.0,
+        "balanced_accuracy": 0.8166666666666667,
+        "roc_auc": 0.9172222222222222,
+        "pr_auc": 0.9255555555555556,
+        "matriz_confusion": {
+          "vn": 30,
+          "fp": 0,
+          "fn": 11,
+          "vp": 19
+        },
+        "matriz_confusion_lista": [
+          [
+            30,
+            0
+          ],
+          [
+            11,
+            19
+          ]
+        ],
+        "tasa_falsos_negativos": 0.36666666666666664,
+        "tasa_falsos_positivos": 0.0
+      },
+      "segundos_por_foto": 0.03,
+      "segundos_total": 1.8,
+      "ventanas_medianas": 1,
+      "errores": [
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.13 AM (1).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0117,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.13 AM (2).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0234,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.13 AM.jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0039,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.14 AM (1).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.14 AM.jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0273,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.17 AM (3).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.17 AM.jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0078,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.18 AM (3).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0078,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.18 AM (4).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.18 AM (5).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0078,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.18 AM (6).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0117,
+          "tipo": "falso_negativo"
+        }
+      ]
+    },
+    {
+      "estrategia": "mosaicos_480px",
+      "lado": 480,
+      "lado_efectivo": 480,
+      "metricas": {
+        "umbral": 0.5,
+        "n_muestras": 60,
+        "accuracy": 0.9166666666666666,
+        "precision": 0.9629629629629629,
+        "recall": 0.8666666666666667,
+        "f1": 0.9122807017543859,
+        "especificidad": 0.9666666666666667,
+        "balanced_accuracy": 0.9166666666666667,
+        "roc_auc": 0.9877777777777778,
+        "pr_auc": 0.9870194003527337,
+        "matriz_confusion": {
+          "vn": 29,
+          "fp": 1,
+          "fn": 4,
+          "vp": 26
+        },
+        "matriz_confusion_lista": [
+          [
+            29,
+            1
+          ],
+          [
+            4,
+            26
+          ]
+        ],
+        "tasa_falsos_negativos": 0.13333333333333333,
+        "tasa_falsos_positivos": 0.03333333333333333
+      },
+      "segundos_por_foto": 0.284,
+      "segundos_total": 16.5,
+      "ventanas_medianas": 24,
+      "errores": [
+        {
+          "archivo": "WhatsApp Image 2026-08-16 at 9.59.37 AM (1).jpeg",
+          "verdad": 0,
+          "probabilidad": 0.5,
+          "tipo": "falso_positivo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.13 AM.jpeg",
+          "verdad": 1,
+          "probabilidad": 0.2188,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.14 AM (1).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.3164,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.14 AM.jpeg",
+          "verdad": 1,
+          "probabilidad": 0.2188,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.18 AM (4).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.0078,
+          "tipo": "falso_negativo"
+        }
+      ]
+    }
+  ]
+}

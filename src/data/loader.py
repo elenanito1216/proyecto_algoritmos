@@ -486,6 +486,103 @@ def calcular_pesos_clase(inventario: Inventario) -> dict[int, float]:
 # --------------------------------------------------------------------------- #
 
 
+def construir_capa_degradacion(factor_maximo: float, probabilidad: float) -> Any:
+    """Crea una capa que simula la perdida de detalle del redimensionado.
+
+    El problema que ataca
+    ---------------------
+    §4.6 del informe demuestra que la brecha entre el conjunto de prueba y las
+    fotografias propias es en buena parte un desajuste de **escala**: los parches
+    de entrenamiento se reducen 1.4 veces al entrar al modelo y una foto de
+    telefono se reduce 7.5 veces. Una fisura de 3 px queda en 0.4 px y desaparece.
+
+    El analisis por mosaicos corrige eso en inferencia, a cambio de multiplicar
+    por 2.4 el coste. Esta capa ataca la misma causa desde el otro lado: si
+    durante el entrenamiento el modelo ve grietas ya degradadas por una reduccion
+    fuerte, aprende a reconocerlas asi, y quiza deje de hacer falta trocear.
+
+    Como funciona
+    -------------
+    Reduce la imagen por un factor aleatorio y la devuelve a su tamano original.
+    El viaje de ida y vuelta es lo que importa: el tensor conserva su forma, pero
+    ha perdido irreversiblemente el detalle fino, exactamente igual que una
+    fotografia grande reducida a 160 px.
+
+    Limitacion conocida: el factor se sortea **una vez por lote**, no por imagen.
+    Hacerlo por imagen exigiria ``tf.map_fn`` con formas dinamicas, que en CPU
+    cuesta mas que el propio entrenamiento. La consecuencia es que las muestras
+    de un mismo lote comparten degradacion; con lotes barajados y muchas epocas,
+    cada imagen acaba viendo un abanico amplio de factores igualmente.
+
+    Args:
+        factor_maximo: Reduccion maxima a simular. Con 4.0 una imagen de 160 px
+            puede llegar a verse como si midiera 40 px.
+        probabilidad: Fraccion de lotes que se degradan. El resto pasa intacto,
+            para que el modelo no olvide como es una grieta bien resuelta.
+
+    Returns:
+        Una capa de Keras aplicable dentro del ``Sequential`` de aumento.
+    """
+    import tensorflow as tf
+
+    class DegradacionEscala(tf.keras.layers.Layer):
+        """Reduce y restaura la imagen para simular perdida de resolucion."""
+
+        def __init__(self, factor_maximo: float, probabilidad: float, **kwargs: Any) -> None:
+            """Guarda los parametros de la degradacion.
+
+            Args:
+                factor_maximo: Reduccion maxima a simular.
+                probabilidad: Fraccion de lotes que se degradan.
+                **kwargs: Argumentos de ``tf.keras.layers.Layer``.
+            """
+            super().__init__(**kwargs)
+            self.factor_maximo = float(factor_maximo)
+            self.probabilidad = float(probabilidad)
+
+        def call(self, entradas: Any, training: bool | None = None) -> Any:
+            """Aplica la degradacion solo durante el entrenamiento.
+
+            Args:
+                entradas: Lote ``(N, H, W, C)``.
+                training: Bandera de fase de Keras.
+
+            Returns:
+                El lote, degradado o intacto, con la misma forma.
+            """
+            if not training or self.factor_maximo <= 1.0 or self.probabilidad <= 0.0:
+                return entradas
+
+            forma = tf.shape(entradas)
+            alto, ancho = forma[1], forma[2]
+
+            def degradar() -> Any:
+                factor = tf.random.uniform([], 1.0, self.factor_maximo)
+                reducido = tf.maximum(
+                    tf.cast(tf.cast(tf.stack([alto, ancho]), tf.float32) / factor, tf.int32), 8
+                )
+                pequena = tf.image.resize(entradas, reducido, method="bilinear")
+                return tf.image.resize(pequena, tf.stack([alto, ancho]), method="bilinear")
+
+            return tf.cond(
+                tf.random.uniform([]) < self.probabilidad, degradar, lambda: entradas
+            )
+
+        def get_config(self) -> dict[str, Any]:
+            """Permite serializar la capa junto con el modelo.
+
+            Returns:
+                Configuracion reconstruible de la capa.
+            """
+            return {
+                **super().get_config(),
+                "factor_maximo": self.factor_maximo,
+                "probabilidad": self.probabilidad,
+            }
+
+    return DegradacionEscala(factor_maximo, probabilidad, name="degradacion_escala")
+
+
 def construir_capa_aumento(config: dict[str, Any]) -> Any:
     """Construye la capa de aumento de datos como un ``Sequential`` de Keras.
 
@@ -526,6 +623,18 @@ def construir_capa_aumento(config: dict[str, Any]) -> Any:
     if aum.get("traslacion", 0):
         t = float(aum["traslacion"])
         capas.append(tf.keras.layers.RandomTranslation(t, t, seed=semilla))
+    # La degradacion va ANTES que contraste y brillo, y el orden importa: simula
+    # una camara que capturo la escena a menor resolucion, y los ajustes
+    # fotometricos ocurren sobre lo que la camara entrego, no antes.
+    degradacion = aum.get("degradacion_escala", {}) or {}
+    if degradacion.get("activo", False):
+        capas.append(
+            construir_capa_degradacion(
+                float(degradacion.get("factor_maximo", 4.0)),
+                float(degradacion.get("probabilidad", 0.5)),
+            )
+        )
+
     if aum.get("contraste", 0):
         capas.append(tf.keras.layers.RandomContrast(float(aum["contraste"]), seed=semilla))
     if aum.get("brillo", 0):

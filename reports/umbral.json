@@ -1,0 +1,61 @@
+{
+  "formato": "keras",
+  "n": 60,
+  "pliegues": 5,
+  "umbral_ventana": 0.5,
+  "umbral_fijo": {
+    "f1": 0.9354838709677419,
+    "recall": 0.9666666666666667,
+    "precision": 0.90625,
+    "fn": 1,
+    "fp": 3
+  },
+  "calibrado_maximo": {
+    "f1": 0.9508196721311475,
+    "recall": 0.9666666666666667,
+    "precision": 0.9354838709677419,
+    "fn": 1,
+    "fp": 2,
+    "umbral_mediano": 0.9977438747882843,
+    "umbrales_por_pliegue": [
+      0.997744,
+      0.997944,
+      0.997744,
+      0.997744,
+      0.212359
+    ],
+    "acuerdo_entre_pliegues": 0.8,
+    "oraculo": {
+      "umbral": 0.9977438747882843,
+      "f1": 0.9830508474576272,
+      "recall": 0.9666666666666667,
+      "precision": 1.0,
+      "fn": 1,
+      "fp": 0
+    }
+  },
+  "calibrado_fraccion": {
+    "f1": 0.8813559322033898,
+    "recall": 0.8666666666666667,
+    "precision": 0.896551724137931,
+    "fn": 4,
+    "fp": 3,
+    "umbral_mediano": 0.125,
+    "umbrales_por_pliegue": [
+      0.125,
+      0.1875,
+      0.229167,
+      0.125,
+      0.083333
+    ],
+    "acuerdo_entre_pliegues": 0.4,
+    "oraculo": {
+      "umbral": 0.125,
+      "f1": 0.9508196721311475,
+      "recall": 0.9666666666666667,
+      "precision": 0.9354838709677419,
+      "fn": 1,
+      "fp": 2
+    }
+  }
+}

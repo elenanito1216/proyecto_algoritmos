@@ -33,7 +33,14 @@ from PIL import Image, UnidentifiedImageError
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import estilos  # noqa: E402
-from src.models.inferencia import Predictor, cargar_predictor  # noqa: E402
+from src.models.inferencia import (  # noqa: E402
+    ETIQUETAS_MODELO,
+    Predictor,
+    ResultadoMosaicos,
+    cargar_predictor,
+    elegir_modelo,
+    predecir_por_mosaicos,
+)
 from src.risk.reglas import evaluar_riesgo  # noqa: E402
 from src.utils.config import cargar_config, obtener  # noqa: E402
 from src.utils.rutas import resolver  # noqa: E402
@@ -310,46 +317,80 @@ def construir_barra_lateral(config: dict[str, Any]) -> dict[str, Any]:
 
         st.divider()
         st.markdown("### 🧠 Modelo")
-        disponibles = artefactos_disponibles(config)
-        etiquetas = {
-            "ensemble": "Ensemble ★",
-            "keras": "MobileNetV2",
-            "tflite": "TFLite int8",
-        }
-        opciones = [f for f in ("ensemble", "keras", "tflite") if disponibles[f]]
 
-        if not opciones:
+        # No hay selector de modelo, y esa ausencia es una decision, no una
+        # simplificacion. Foto y video imponen restricciones opuestas: analizar
+        # una fotografia admite un segundo de calculo y exige el maximo recall;
+        # el video tiene 33 ms por fotograma y no admite ninguno. Un unico modelo
+        # no puede ser el mejor en ambos, y pedirle al usuario que elija seria
+        # trasladarle una decision que la aplicacion puede tomar mejor: la
+        # respuesta correcta esta medida en el informe, no depende de su gusto.
+        disponibles = artefactos_disponibles(config)
+        estado["formato"] = elegir_modelo(config, "foto", disponibles)
+        estado["formato_video"] = elegir_modelo(config, "video", disponibles)
+
+        if estado["formato"] is None:
             st.error(
                 "No hay ningun modelo entrenado.\n\n"
                 "Ejecuta primero:\n"
                 "`python scripts/train_transfer.py --config config.yaml`"
             )
-            estado["formato"] = None
         else:
-            por_defecto = str(obtener(config, "app.modelo_por_defecto", "ensemble"))
-            indice = opciones.index(por_defecto) if por_defecto in opciones else 0
-            estado["formato"] = st.radio(
-                "Formato activo",
-                opciones,
-                index=indice,
-                format_func=lambda v: etiquetas[v],
+            st.markdown(
+                f"- **Fotografias** · {ETIQUETAS_MODELO[estado['formato']]} + mosaicos\n"
+                f"- **Video en vivo** · {ETIQUETAS_MODELO.get(estado['formato_video'], '—')}"
+            )
+            st.caption(
+                "La aplicacion elige el modelo segun lo que se este analizando. Para "
+                "fotografias manda el acierto: **MobileNetV2 con mosaicos, F1 0.936** "
+                "sobre 60 fotos propias. Para video manda la latencia: **TFLite int8, "
+                "4.9 ms**, lo unico que sostiene 30 FPS.\n\n"
+                "El ensemble se retiro de la interfaz: con mosaicos solo aporta "
+                "**+0.015 de F1** —un falso positivo de sesenta— por un 26 % mas de "
+                "tiempo. Lo que aportaba era compensar el error de escala que los "
+                "mosaicos corrigen en su origen (§4.6). Sigue medible con el boton de "
+                "abajo."
+            )
+            estado["comparar_latencias"] = st.button(
+                "⚡ Comparar los tres en vivo", use_container_width=True
+            )
+
+        st.divider()
+        st.markdown("### 🔍 Escala de analisis")
+        estado["mosaicos"] = st.checkbox(
+            "Analizar por mosaicos",
+            value=bool(obtener(config, "app.mosaicos.activo", True)),
+            help=(
+                "Trocea la fotografia en ventanas y analiza cada una por separado.\n\n"
+                "Una foto de telefono (1600x1200) se reduce 7.5 veces para entrar al "
+                "modelo, que aprendio con parches que solo se reducian 1.4 veces. Una "
+                "grieta de 3 px queda en 0.4 px: **desaparece antes de que el modelo la "
+                "vea**. Trocear devuelve cada region a una escala reconocible."
+            ),
+        )
+        if estado["mosaicos"]:
+            estado["lado_mosaico"] = st.select_slider(
+                "Lado del mosaico (px)",
+                options=[227, 320, 480, 640],
+                value=int(obtener(config, "app.mosaicos.lado_px", 480)),
                 help=(
-                    "**Ensemble**: promedia la CNN de linea base con MobileNetV2. Es el "
-                    "que mejor funciona con fotografias reales, por un 11% de latencia.\n\n"
-                    "**MobileNetV2**: el modelo solo.\n\n"
-                    "**TFLite int8**: la variante para movil, 35x mas rapida."
+                    "Medido sobre 60 fotos propias (F1 / recall / segundos por foto):\n\n"
+                    "- sin mosaicos — 0.889 / 0.80 / 0.32 s\n"
+                    "- 227 px — 0.918 / 0.93 / 2.27 s\n"
+                    "- 320 px — 0.936 / 0.97 / 1.33 s\n"
+                    "- **480 px — 0.951 / 0.97 / 0.78 s**\n"
+                    "- 640 px — 0.951 / 0.97 / 0.55 s\n\n"
+                    "El optimo no esta en 227 px, el tamano de los parches de "
+                    "entrenamiento: los mosaicos pequenos dejan la grieta sin contexto y "
+                    "multiplican las falsas alarmas."
                 ),
             )
-            if estado["formato"] == "ensemble":
-                st.caption(
-                    "★ Sobre las 40 fotos propias el ensemble sube el F1 de 0.667 a "
-                    "**0.824** y elimina 4 de los 10 falsos negativos, por un 11% de "
-                    "latencia. Curiosamente, en el dataset publico empeora: los dos "
-                    "modelos solo se complementan fuera de distribucion."
-                )
-            estado["comparar_latencias"] = st.button(
-                "⚡ Comparar latencias en vivo", use_container_width=True
+            st.caption(
+                "Sube el recall de **0.80 a 0.97** sobre fotografias propias (de 6 "
+                "grietas perdidas a 1), a cambio de 2 falsas alarmas y algo mas de tiempo."
             )
+        else:
+            estado["lado_mosaico"] = int(obtener(config, "app.mosaicos.lado_px", 480))
 
         st.divider()
         st.markdown("### 🔧 Sensibilidad de OpenCV")
@@ -450,6 +491,74 @@ def panel_info_modelo(predictor: Predictor) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _conviene_trocear(imagen_rgb: np.ndarray, config: dict[str, Any]) -> bool:
+    """Decide si trocear la imagen aporta algo.
+
+    Trocear una imagen que ya es pequena no rescata ninguna grieta, porque no
+    habia perdida de escala que rescatar, pero si multiplica las ocasiones de dar
+    una falsa alarma. El troceado solo se activa cuando la imagen es lo bastante
+    grande como para que el redimensionado destruya detalle.
+
+    Args:
+        imagen_rgb: Imagen RGB de entrada.
+        config: Configuracion del proyecto.
+
+    Returns:
+        ``True`` si merece la pena analizarla por ventanas.
+    """
+    minimo = int(obtener(config, "app.mosaicos.lado_minimo_imagen", 600))
+    alto, ancho = np.asarray(imagen_rgb).shape[:2]
+    return min(alto, ancho) >= minimo
+
+
+def marcar_mosaicos(
+    imagen_rgb: np.ndarray, mosaicos: ResultadoMosaicos, umbral: float
+) -> np.ndarray:
+    """Senala sobre la imagen las ventanas donde el modelo vio evidencia.
+
+    Es un efecto colateral valioso del troceado: analizando la imagen entera solo
+    se obtiene "hay grieta o no la hay"; analizandola por ventanas se sabe
+    **donde**. Para un inspector, esa es la diferencia entre un aviso y una
+    indicacion util.
+
+    Solo se dibujan las ventanas que superan el umbral, y se resalta la de mayor
+    probabilidad. Dibujar tambien las demas llenaria la fotografia de recuadros y
+    escondaria la informacion en lugar de mostrarla.
+
+    Args:
+        imagen_rgb: Imagen RGB sobre la que dibujar. No se modifica.
+        mosaicos: Resultado del analisis por ventanas.
+        umbral: Umbral de decision vigente.
+
+    Returns:
+        Copia de la imagen con las ventanas marcadas.
+    """
+    lienzo = np.asarray(imagen_rgb).copy()
+    if mosaicos.indice_maximo < 0:
+        return lienzo
+
+    grosor = max(2, int(min(lienzo.shape[:2]) / 250))
+    for indice, (x0, y0, x1, y1) in enumerate(mosaicos.ventanas):
+        probabilidad = float(mosaicos.probabilidades[indice])
+        if probabilidad < umbral:
+            continue
+        es_maximo = indice == mosaicos.indice_maximo
+        color = (220, 30, 30) if es_maximo else (250, 170, 40)
+        cv2.rectangle(lienzo, (x0, y0), (x1, y1), color, grosor * (2 if es_maximo else 1))
+        if es_maximo:
+            cv2.putText(
+                lienzo,
+                f"{probabilidad:.0%}",
+                (x0 + grosor * 3, y0 + grosor * 14),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                grosor * 0.35,
+                color,
+                max(1, grosor),
+                cv2.LINE_AA,
+            )
+    return lienzo
+
+
 def ejecutar_pipeline(
     imagen_rgb: np.ndarray, predictor: Predictor, config: dict[str, Any], controles: dict[str, Any]
 ) -> dict[str, Any]:
@@ -485,7 +594,19 @@ def ejecutar_pipeline(
     barra.progress(0.2, text=f"2/5 · {etapas[1]}")
 
     # Etapa 3: clasificacion.
-    probabilidad, ms_inferencia = predictor.predecir_imagen(imagen_rgb, config)
+    #
+    # Se hace sobre la imagen ENTERA, no sobre 'imagen_vision': el redimensionado
+    # a 1024 px que necesita OpenCV ya destruiria parte de la evidencia fina que
+    # el analisis por mosaicos pretende rescatar.
+    mosaicos = None
+    if controles.get("mosaicos") and _conviene_trocear(imagen_rgb, config):
+        mosaicos = predecir_por_mosaicos(
+            predictor, imagen_rgb, config, lado=controles.get("lado_mosaico")
+        )
+        probabilidad = mosaicos.probabilidad
+        ms_inferencia = mosaicos.milisegundos
+    else:
+        probabilidad, ms_inferencia = predictor.predecir_imagen(imagen_rgb, config)
     barra.progress(0.4, text=f"3/5 · {etapas[2]}")
 
     # Etapa 4: inclinometria y orientacion de la grieta.
@@ -524,13 +645,76 @@ def ejecutar_pipeline(
     return {
         "probabilidad": probabilidad,
         "ms_inferencia": ms_inferencia,
+        "mosaicos": mosaicos,
         "inclinacion": inclinacion,
         "orientacion": orientacion,
         "evaluacion": evaluacion,
         "imagen_vision": imagen_vision,
+        "imagen_rgb": imagen_rgb,
         "imagen_anotada": cv2.cvtColor(anotada_bgr, cv2.COLOR_BGR2RGB),
         "ms_total": (time.perf_counter() - inicio_total) * 1000.0,
     }
+
+
+def _panel_mosaicos(imagen_rgb: np.ndarray, mosaicos: ResultadoMosaicos, umbral: float) -> None:
+    """Muestra donde encontro evidencia el analisis por ventanas.
+
+    Args:
+        imagen_rgb: Imagen original a tamano completo.
+        mosaicos: Resultado del troceado.
+        umbral: Umbral de decision vigente.
+    """
+    probabilidades = mosaicos.probabilidades
+    activas = int((probabilidades >= umbral).sum())
+    reduccion = min(np.asarray(imagen_rgb).shape[:2]) / 160.0
+
+    st.markdown("#### Localizacion de la evidencia")
+    izquierda, derecha = st.columns([3, 2], gap="medium")
+
+    with izquierda:
+        st.image(
+            marcar_mosaicos(imagen_rgb, mosaicos, umbral),
+            use_column_width=True,
+            caption=(
+                f"{activas} de {len(mosaicos.ventanas)} ventanas superan el umbral. "
+                "En rojo, la de mayor probabilidad."
+            ),
+        )
+
+    with derecha:
+        st.markdown(
+            f"La fotografia se analizo en **{len(mosaicos.ventanas)} ventanas de "
+            f"{mosaicos.lado}x{mosaicos.lado} px** con un 50 % de solape, en lugar de "
+            "reducir la imagen entera a 160 px."
+        )
+        st.markdown(
+            f"- Ventana mas alta: **{probabilidades.max():.1%}**\n"
+            f"- Mediana de las ventanas: **{float(np.median(probabilidades)):.1%}**\n"
+            f"- Ventanas sobre el umbral: **{activas}**"
+        )
+        if activas == 0:
+            st.caption(
+                "Ninguna ventana supera el umbral: la superficie parece sana en toda su "
+                "extension, no solo en promedio."
+            )
+        elif activas == 1:
+            st.caption(
+                "Dispara una sola ventana. Si la evidencia fuese ruido tenderia a "
+                "aparecer dispersa; concentrada en una region es mas creible."
+            )
+        else:
+            st.caption(
+                "La evidencia aparece en varias ventanas, lo que es coherente con una "
+                "fisura que recorre la superficie."
+            )
+
+        st.caption(
+            f"**Por que se trocea:** esta foto se reduciria {reduccion:.1f} veces para "
+            "entrar al modelo, que aprendio con parches que solo se reducian 1.4 veces. "
+            "Una fisura fina no sobrevive a esa reduccion."
+        )
+
+    st.write("")
 
 
 def pestana_analisis(
@@ -583,14 +767,15 @@ def pestana_analisis(
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         hay_grieta = resultado["probabilidad"] >= umbral
+        mosaicos = resultado.get("mosaicos")
+        nota_grieta = f"{'Grieta detectada' if hay_grieta else 'Sin grieta'} (umbral {umbral:.0%})"
+        if mosaicos is not None:
+            nota_grieta += f" · maximo de {len(mosaicos.ventanas)} ventanas de {mosaicos.lado} px"
         st.markdown(
             estilos.tarjeta_metrica(
                 "Probabilidad de grieta",
                 f"{resultado['probabilidad']:.1%}",
-                nota=(
-                    f"{'Grieta detectada' if hay_grieta else 'Sin grieta'} "
-                    f"(umbral {umbral:.0%})"
-                ),
+                nota=nota_grieta,
             ),
             unsafe_allow_html=True,
         )
@@ -637,6 +822,10 @@ def pestana_analisis(
         "orientación de la fisura, encuadra la zona agrietada de cerca."
     )
     st.write("")
+
+    # --- Localizacion por mosaicos -----------------------------------------
+    if mosaicos is not None:
+        _panel_mosaicos(resultado["imagen_rgb"], mosaicos, umbral)
 
     # --- Comparacion lado a lado -------------------------------------------
     st.markdown("#### Comparacion visual")
@@ -780,11 +969,14 @@ def bloque_comparar_latencias(config: dict[str, Any], imagen_rgb: np.ndarray | N
         sobrecoste = 100 * (e["Latencia media (ms)"] / max(k["Latencia media (ms)"], 1e-9) - 1)
         st.info(
             f"El **ensemble** cuesta un **{sobrecoste:+.0f}%** de latencia frente a "
-            "MobileNetV2 sola y sube el F1 sobre fotografias reales de 0.667 a "
-            "**0.824**, eliminando 4 de los 10 falsos negativos.\n\n"
-            "La medida de referencia es **+11 %**. La CNN de linea base es solo el "
-            "1.9 % de los parametros del conjunto pero aporta el 11 % del tiempo: "
-            "el numero de parametros predice mal la latencia."
+            "MobileNetV2 sola (la medida de referencia es **+11 %**). La CNN de linea "
+            "base es solo el 1.9 % de los parametros del conjunto pero aporta el 11 % "
+            "del tiempo: el numero de parametros predice mal la latencia.\n\n"
+            "**Por que ya no se usa.** Sin mosaicos compraba +0.089 de F1 (0.800 → "
+            "0.889) con ese 11 %, y era una compra evidente. Con mosaicos compra "
+            "**+0.015** (0.936 → 0.951) por un 26 % mas de tiempo: un unico falso "
+            "positivo de sesenta. La ganancia nunca fue del ensemble, era del error de "
+            "escala que compensaba, y ese error ya esta corregido en su origen (§4.6)."
         )
         st.caption(
             "Esta comparacion usa 5 pasadas de calentamiento; con tan pocas, el "
@@ -1369,6 +1561,14 @@ def procesar_fotograma(
     - La **inclinometria** usa el fotograma completo, porque necesita ver el
       elemento vertical entero para encontrar su arista.
 
+    Visto a la luz de §4.6, el recorte central resulta ser **el equivalente en
+    tiempo real del analisis por mosaicos**: ambos evitan que la escena entera se
+    reduzca a 160 px y borre la fisura. La diferencia es que aqui se mira una
+    sola ventana en lugar de veinticuatro, porque a treinta fotogramas por
+    segundo no hay presupuesto para mas. El precio es que solo se analiza el
+    centro del encuadre, y por eso se dibuja el recuadro "zona analizada": la
+    interfaz no debe dejar creer que se esta mirando todo lo que se ve.
+
     Args:
         fotograma_bgr: Fotograma capturado, en BGR.
         predictor: Predictor activo.
@@ -1428,6 +1628,7 @@ def _tarjetas_vivo(
     umbral: float,
     estabilidad: float,
     edad_ms: float,
+    columnas: int = 4,
 ) -> str:
     """Construye el HTML de las tarjetas del modo video.
 
@@ -1440,6 +1641,8 @@ def _tarjetas_vivo(
         umbral: Umbral de decision.
         estabilidad: Dispersion temporal de la probabilidad.
         edad_ms: Antiguedad del fotograma mostrado, en milisegundos.
+        columnas: Cuantas tarjetas por fila. Se usa 1 cuando van en la columna
+            estrecha junto al video, y 4 cuando ocupan el ancho completo.
 
     Returns:
         Fragmento HTML con cuatro tarjetas.
@@ -1457,7 +1660,8 @@ def _tarjetas_vivo(
         texto_ang, nota_ang = "—", "Sin elemento vertical"
 
     return (
-        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.8rem">'
+        f'<div style="display:grid;grid-template-columns:repeat({max(1, columnas)},1fr);'
+        'gap:0.8rem">'
         + estilos.tarjeta_metrica("P(grieta) suavizada", texto_prob, nota=nota_prob)
         + estilos.tarjeta_metrica("Desaplome", texto_ang, "°", nota_ang)
         + estilos.tarjeta_metrica(
@@ -1501,10 +1705,28 @@ def pestana_camara(
     )
 
     if modo == "foto":
+        # Una instantanea es una fotografia: se analiza con el modelo de foto y
+        # con mosaicos, igual que una imagen subida.
         _modo_foto(config, controles, predictor)
         return
 
-    _modo_video(config, controles, predictor, cfg)
+    # El video usa su propio modelo. Cargarlo aqui y no en main() evita que abrir
+    # la aplicacion cargue en memoria un modelo que quiza no se llegue a usar.
+    formato_video = controles.get("formato_video")
+    predictor_video = predictor
+    if formato_video and formato_video != predictor.formato:
+        try:
+            clave, marca = clave_y_marca(config, formato_video)
+            predictor_video = obtener_predictor(formato_video, clave, marca)
+        except (FileNotFoundError, ValueError, RuntimeError) as error:
+            st.warning(
+                f"No se pudo cargar **{ETIQUETAS_MODELO.get(formato_video, formato_video)}** "
+                f"para el vídeo ({error}). Se usará "
+                f"**{ETIQUETAS_MODELO.get(predictor.formato, predictor.formato)}**, "
+                "que es más lento y bajará los FPS."
+            )
+
+    _modo_video(config, controles, predictor_video, cfg)
 
 
 def _modo_foto(config: dict[str, Any], controles: dict[str, Any], predictor: Predictor) -> None:
@@ -1568,13 +1790,22 @@ def _modo_video(
         cfg: Seccion ``app.camara`` de la configuracion.
     """
     recomendado = str(cfg.get("modelo_recomendado", "tflite"))
-    if predictor.formato != recomendado and recomendado == "tflite":
+    if predictor.formato == recomendado:
+        st.caption(
+            f"Modelo en uso: **{ETIQUETAS_MODELO.get(predictor.formato, predictor.formato)}** "
+            "(4.9 ms por fotograma). El vídeo se analiza con un modelo distinto al de las "
+            "fotografías, y a propósito: aquí hay 33 ms por fotograma para sostener 30 FPS, "
+            "y ningún otro cabe en ese presupuesto. El precio es menos recall por fotograma, "
+            "que el suavizado temporal compensa en parte agregando varias observaciones de "
+            "la misma escena."
+        )
+    else:
         st.warning(
-            f"Estás usando **{predictor.formato}**, que tarda "
-            f"~{'190' if predictor.formato == 'ensemble' else '170'} ms por imagen: "
-            "el vídeo irá a unos 5 FPS. Para vídeo fluido cambia a **TFLite int8** "
-            "(4.9 ms) en la barra lateral. Es el compromiso real entre precisión y "
-            "velocidad que documenta el informe, y se ve aquí en directo."
+            f"El vídeo está usando **{ETIQUETAS_MODELO.get(predictor.formato, predictor.formato)}**, "
+            f"que tarda ~{'190' if predictor.formato == 'ensemble' else '170'} ms por "
+            "fotograma: irá a unos 5 FPS. Lo esperado es **TFLite int8** (4.9 ms). "
+            "Expórtalo con `python scripts/export_tflite.py --config config.yaml` para "
+            "recuperar el vídeo fluido."
         )
 
     # --- Seleccion de la fuente de video ------------------------------------
@@ -1664,8 +1895,31 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
             ),
             format_func=lambda i: f"Dispositivo {i}",
         )
-    columna_a, columna_b = st.columns(2)
+    # El tamano de la vista se queda visible; los otros dos controles van
+    # plegados. Cada bloque de ajustes que ocupa alto empuja hacia abajo el video
+    # y el veredicto, que son las dos cosas que hay que mirar mientras se inspecciona.
+    # Los ajustes se tocan una vez; el video y el riesgo, todo el rato.
+    columna_a, columna_b = st.columns([2, 3])
     with columna_a:
+        # Un stream de telefono llega en vertical (1200x1600) y a ancho completo
+        # desplaza el semaforo de riesgo fuera de la pantalla.
+        ancho_vista = st.select_slider(
+            "Tamaño del vídeo",
+            options=[320, 400, 480, 560, 640],
+            value=int(cfg.get("ancho_vista", 400)),
+            help=(
+                "Ancho en píxeles de la previsualización. No afecta al análisis: "
+                "el modelo siempre recibe el recorte a resolución completa."
+            ),
+        )
+    with columna_b:
+        st.caption(
+            "Si el vídeo tapa el semáforo de riesgo, baja este valor. La imagen es solo "
+            "para encuadrar: el clasificador recibe siempre el recorte a resolución "
+            "completa, así que reducirla **no** empeora la detección."
+        )
+
+    with st.expander("⚙ Ajustes de análisis"):
         fraccion = st.slider(
             "Zona analizada",
             0.2,
@@ -1701,10 +1955,18 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
             liberar_camara()
             st.rerun()
 
-    marcador_tarjetas = st.empty()
-    marcador_video = st.empty()
-    marcador_semaforo = st.empty()
-    marcador_avisos = st.empty()
+    # Video y veredicto lado a lado, no apilados. Apilados obligaban a hacer
+    # scroll para pasar de "que estoy enfocando" a "que riesgo tiene", que son
+    # justamente las dos cosas que hay que leer juntas mientras se mueve la
+    # camara: si no se ven a la vez, no se puede saber que encuadre produjo que
+    # resultado.
+    columna_video, columna_datos = st.columns([3, 2], gap="medium")
+    with columna_video:
+        marcador_video = st.empty()
+        marcador_avisos = st.empty()
+    with columna_datos:
+        marcador_semaforo = st.empty()
+        marcador_tarjetas = st.empty()
 
     if not activa:
         marcador_video.info(
@@ -1782,7 +2044,10 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
 
         # Esta llamada es tambien el punto donde Streamlit puede interrumpir el
         # bucle si el usuario pulsa Detener.
-        marcador_video.image(resultado["anotada_rgb"], use_column_width=True)
+        # width en pixeles y no use_column_width: la anchura de la columna varia
+        # con el navegador, y un stream vertical a ancho completo empuja el
+        # veredicto fuera de la pantalla.
+        marcador_video.image(resultado["anotada_rgb"], width=ancho_vista)
         st.session_state.edad_fotograma = edad_ms
 
         # La orientacion se mide sobre el RECORTE, nunca sobre el fotograma
@@ -1829,6 +2094,7 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
                 umbral,
                 suave_prob.estabilidad(),
                 edad_ms,
+                columnas=1,
             ),
             unsafe_allow_html=True,
         )
@@ -1891,12 +2157,9 @@ def main() -> None:
 
     predictor: Predictor | None = None
     if controles.get("formato"):
-        clave = "app.archivo_keras" if controles["formato"] == "keras" else "app.archivo_tflite"
-        ruta = str(resolver(obtener(config, clave)))
+        clave, marca = clave_y_marca(config, controles["formato"])
         try:
-            predictor = obtener_predictor(
-                controles["formato"], ruta, marca_de(obtener(config, clave))
-            )
+            predictor = obtener_predictor(controles["formato"], clave, marca)
             panel_info_modelo(predictor)
         except (FileNotFoundError, ValueError, RuntimeError) as error:
             st.sidebar.error(f"No se pudo cargar el modelo: {error}")

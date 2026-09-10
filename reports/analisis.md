@@ -193,6 +193,8 @@ Igual de revelador: la línea base, con **52 veces menos parámetros**, tardó *
 ### 3.4 Generalización: dataset público frente a fotos propias
 
 Conjunto propio: 40 fotografías tomadas por el equipo (20 con grieta, 20 sin grieta), nunca usadas para entrenar ni para elegir hiperparámetros.
+
+> **Nota sobre el tamaño de la muestra.** El conjunto propio se amplió después a **60 fotografías** (30 y 30). Las cifras de §3.4 a §3.8 y de §4.5 son las medidas sobre las 40 originales y se conservan tal cual: reescribirlas con los datos nuevos ocultaría que las decisiones de diseño se tomaron con la información disponible entonces. Las mediciones de **§4.6 usan las 60**, y su tabla incluye la línea base recalculada sobre la misma muestra, de modo que la comparación que sustenta la conclusión es interna y homogénea.
 Fuente: `evaluacion.json` → `modelos.<etiqueta>.test` frente a `.propias`
 
 | Modelo | F1 `test` (depurado) | F1 en `propias` | **Brecha** | Recall propias | Precisión propias | FN | FP |
@@ -596,6 +598,286 @@ Mitigaciones que siguen dependiendo del operador:
 
 **Este hallazgo apareció usando la aplicación, no ejecutando pruebas.** Es un argumento a favor de haber construido una interfaz que muestra el trabajo intermedio del algoritmo en lugar de solo su conclusión: un panel que hubiera mostrado únicamente «Riesgo Alto · desaplome 34.90°» habría ocultado el error por completo.
 
+### 4.6 El error no era del modelo: era nuestro, y estaba en el redimensionado
+
+Esta sección corrige un diagnóstico anterior de esta misma memoria. Es el hallazgo más importante del proyecto y también el más incómodo, porque durante varias fases se atribuyó a la naturaleza del problema un fallo que habíamos introducido nosotros.
+
+#### El diagnóstico que dimos por bueno
+
+El modelo alcanza F1 0.9423 sobre el conjunto de prueba depurado y colapsaba a 0.6667 sobre nuestras propias fotografías. La §6 lo explicaba como **desplazamiento de dominio**: otro material, otra iluminación, otra cámara, otro país. La explicación era plausible, encajaba con la literatura y estaba respaldada por los sesgos reales del dataset. Su problema es que nunca se puso a prueba: se aceptó porque sonaba razonable.
+
+De ella se derivaron dos líneas de trabajo, ambas costosas: recolectar más fotografías propias y recalibrar el umbral por dominio.
+
+#### La medición que lo desmonta
+
+Antes de recolectar nada, medimos algo que no habíamos mirado nunca: **el tamaño de las imágenes**.
+
+| Origen | n | Tamaño mediano | Reducción hasta 160 px |
+|---|---|---|---|
+| Parches de entrenamiento | 400 | 227 × 227 | **1.4×** |
+| Fotografías propias | 60 | 1200 × 1600 | **7.5×** |
+
+Una fisura de 3 px de ancho en la imagen original llega al modelo así:
+
+- desde un parche de entrenamiento: 3 / 1.4 = **2.1 px** — sobrevive;
+- desde una foto de teléfono: 3 / 7.5 = **0.4 px** — no sobrevive.
+
+Por debajo de un píxel, la interpolación bilineal promedia la fisura con la pared que la rodea hasta hacerla indistinguible del ruido de textura. **La grieta no se le escapa al modelo: la borramos antes de enseñársela.**
+
+Y hay un detalle que confirma que el fallo era de procedimiento y no de dominio: las 227 × 227 del entrenamiento son parches *recortados* de fotografías grandes, no fotografías reducidas. El dataset nunca contuvo una imagen que hubiera sufrido una reducción de 7.5×. Estábamos evaluando el modelo en un régimen de escala que jamás había visto, y llamando a eso «otro dominio».
+
+#### La corrección: analizar por mosaicos
+
+Si la hipótesis es correcta, trocear la fotografía en ventanas y evaluarlas por separado debe recuperar el recall **sin reentrenar nada**. Es una predicción falsable: si el problema fuese el material o la iluminación, el troceado no cambiaría el resultado.
+
+Medido con `scripts/evaluar_mosaicos.py` sobre las 60 fotografías propias, con el ensemble y umbral 0.5:
+
+| Estrategia | F1 | Recall | Precisión | FN | FP | Ventanas | s/foto |
+|---|---|---|---|---|---|---|---|
+| Imagen entera | 0.8889 | 0.80 | 1.000 | **6** | 0 | 1 | 0.32 |
+| Mosaicos 227 px | 0.9180 | 0.93 | 0.903 | 2 | 3 | 140 | 2.27 |
+| Mosaicos 320 px | 0.9355 | 0.97 | 0.906 | 1 | 3 | 63 | 1.33 |
+| **Mosaicos 480 px** | **0.9508** | **0.97** | 0.935 | **1** | 2 | 24 | 0.78 |
+| Mosaicos 640 px | 0.9508 | 0.97 | 0.935 | 1 | 2 | 12 | 0.55 |
+
+La predicción se cumple: **el recall pasa de 0.80 a 0.97** y los falsos negativos de 6 a 1, sin tocar los pesos. El F1 supera además el 0.8889 que alcanzaba la recalibración del umbral con el óptimo elegido *a posteriori* sobre las propias fotos (§3.8), es decir, bate a una cota que ya era optimista.
+
+#### El óptimo no está donde la teoría ingenua lo pondría
+
+El resultado interesante no es que el troceado funcione, sino **dónde deja de funcionar**. Si la única causa fuese la escala, el mejor mosaico sería el de 227 px, que reproduce exactamente el tamaño de los parches de entrenamiento. Es la peor de las cuatro filas de troceado.
+
+Hay dos efectos en sentidos opuestos:
+
+1. **Mosaicos grandes** → reducción excesiva → la fisura desaparece (el caso extremo es la imagen entera);
+2. **Mosaicos pequeños** → la fisura pierde su contexto. Una grieta se reconoce por cómo interrumpe la superficie que la rodea; un recorte de 227 px de una foto de 1600 px muestra una franja de pared con una línea, sin la continuidad que la identifica. Además multiplica por seis el número de ventanas y, con agregación por máximo, **por seis las ocasiones de dar una falsa alarma**: los falsos positivos suben de 2 a 3 mientras el recall baja.
+
+El óptimo es interior, en 480–640 px, y hay que encontrarlo midiendo. Se eligió 480 px: empata con 640 en métricas y falla en las mismas tres fotos, pero deja el único falso negativo en p = 0.222 en lugar de p = 0.071 —tres veces más cerca de detectarse— y con 24 ventanas en vez de 12 localiza la grieta con el doble de resolución.
+
+#### El precio, dicho sin adornos
+
+La precisión baja de **1.000 a 0.935**: aparecen 2 falsas alarmas donde antes no había ninguna. Es aritmética directa de la agregación por máximo: 24 ventanas son 24 oportunidades de equivocarse, frente a una sola. Y el coste por fotografía sube de 0.32 s a 0.78 s, un factor 2.4× para 24 veces más inferencias —la diferencia la absorbe el procesamiento por lotes, que amortiza el coste fijo de cada llamada al modelo.
+
+Ambos precios son los que §4.1 argumenta que hay que pagar: en evaluación estructural, una falsa alarma cuesta una inspección; un falso negativo puede costar una vida.
+
+#### Un beneficio no buscado: localización
+
+Analizar por ventanas responde a una pregunta que la inferencia sobre la imagen entera no puede responder: **dónde**. La aplicación dibuja las ventanas que superan el umbral y resalta la más alta. Para un inspector, la diferencia entre «hay grieta en esta foto» y «hay grieta aquí» es la diferencia entre un aviso y una indicación accionable. Además ofrece una comprobación de coherencia gratuita: la evidencia concentrada en ventanas contiguas es más creíble que la dispersa, que sugiere ruido.
+
+#### Lo que este hallazgo obliga a corregir
+
+- La §6 mantenía «Escala: recortes a distancia aproximadamente constante → degradación con encuadres amplios» como un sesgo del *dataset*. Es más que eso: es un sesgo que **nuestro preprocesado convertía en un fallo evitable**. La fila queda corregida.
+- La recomendación de recolectar más fotografías propias pierde prioridad. El modelo no necesitaba más ejemplos; necesitaba verlos a la escala correcta.
+- La recalibración del umbral por dominio (§3.8) pasa de ser el arreglo principal a un ajuste fino: con mosaicos, el recall ya es 0.97 en el umbral por defecto.
+
+#### Consecuencia inesperada: el ensemble casi deja de hacer falta
+
+Al repetir la medición con MobileNetV2 sola aparece un resultado que reordena una decisión anterior del proyecto. Las cuatro celdas, sobre las mismas 60 fotografías:
+
+| | Imagen entera | Mosaicos 480 px | Ganancia del troceado |
+|---|---|---|---|
+| **MobileNetV2 sola** | F1 0.8000 · recall 0.67 · 10 FN | F1 0.9355 · recall 0.97 · 1 FN | **+0.1355** |
+| **Ensemble** | F1 0.8889 · recall 0.80 · 6 FN | F1 0.9508 · recall 0.97 · 1 FN | +0.0619 |
+| **Ventaja del ensemble** | **+0.0889** | **+0.0153** | |
+
+El troceado ayuda **más al modelo solo que al ensemble**, y el motivo es coherente con todo lo anterior: la ventaja del ensemble consistía en gran parte en **compensar un error que ahora está corregido en su origen**. Promediar dos modelos rescataba algunas de las grietas que el redimensionado había casi borrado; cuando la grieta llega íntegra, hay mucho menos que rescatar.
+
+Corregida la escala, el ensemble aporta **0.0153 de F1 —un solo falso positivo de sesenta— a cambio de un 26 % más de tiempo** (0.78 s frente a 0.62 s por fotografía). En la decisión original (§3.8) el ensemble compraba 0.0889 de F1 por un 11 % de latencia, y era una compra evidente. Ahora la relación es mucho peor, y con `n = 60` esa diferencia de un solo caso no es distinguible del ruido.
+
+Esto no invalida el ensemble, pero sí obliga a revisar por qué está: **se mantiene por su comportamiento en el modo de vídeo**, donde no hay troceado y la ventaja de +0.0889 sigue vigente. Para el análisis de fotografías, MobileNetV2 sola con mosaicos es la opción defendible, y la aplicación permite elegirla.
+
+Es también una advertencia general sobre cómo se acumulan las mejoras en un proyecto: una técnica que se justificó midiendo contra una línea base defectuosa puede dejar de estar justificada cuando el defecto se arregla. La ganancia de +0.0889 nunca fue del ensemble; era del error que compensaba.
+
+#### La lección metodológica
+
+Es la tercera vez en este proyecto que un fallo atribuido al modelo resultó estar en cómo le entregábamos los datos: el barajado que producía lotes de una sola clase, la fuga de datos entre particiones y ahora la escala del redimensionado. Las tres veces la explicación sofisticada —el modelo no converge, el dominio es distinto— era más cómoda que la simple, y las tres veces era falsa.
+
+El patrón que las une: **medir la entrada antes de culpar al modelo**. Ninguno de los tres fallos requirió técnicas avanzadas para encontrarse; los tres requirieron mirar una estadística elemental de los datos que nadie había mirado. En este caso, la mediana de dos números que llevaban meses en el disco.
+
+
+### 4.7 Calibrar el umbral: un resultado negativo, medido en serio
+
+Con el análisis por mosaicos funcionando, quedaba pendiente la última mejora «gratuita» del plan: mover el umbral de decisión. La §3.8 ya lo había intentado, pero eligiendo el umbral sobre las mismas fotos en las que después reportaba el resultado —circular, y allí se etiquetó como cota superior—. Aquí se hace bien, con `scripts/calibrar_umbral.py`.
+
+#### El protocolo
+
+**Validación cruzada estratificada de 5 pliegues.** La regla se elige en 4 pliegues y se aplica al quinto, que no participó en la elección. Las predicciones fuera de pliegue se acumulan y se miden juntas. Es la diferencia entre *«existe una regla que funciona en estas 60 fotos»* y *«elegir la regla así funcionará en la foto 61»*.
+
+Se compararon dos familias de reglas, porque la agregación por máximo deja dos formas distintas de decidir:
+
+1. **Umbral sobre el máximo** de las 24 ventanas — lo habitual.
+2. **Fracción mínima de ventanas** que ven grieta — exigir que la fisura aparezca en varias ventanas, no en una sola. A priori parecía la más robusta: cuenta evidencias en lugar de fiarse de un único valor extremo, y se explica sin hablar de probabilidades.
+
+#### Resultado
+
+| Regla | F1 | Recall | Precisión | FN | FP | Corte |
+|---|---|---|---|---|---|---|
+| **Umbral fijo 0.5 (actual)** | 0.9355 | 0.97 | 0.906 | 1 | 3 | 0.5000 |
+| CV · umbral sobre el máximo | 0.9508 | 0.97 | 0.935 | 1 | 2 | 0.9977 |
+| CV · fracción de ventanas | **0.8814** | 0.87 | 0.897 | 4 | 3 | 0.1250 |
+| *Oráculo sobre el máximo* | *0.9831* | *0.97* | *1.000* | *1* | *0* | *0.9977* |
+| *Oráculo sobre la fracción* | *0.9508* | *0.97* | *0.935* | *1* | *2* | *0.1250* |
+
+Dos sorpresas, y ninguna en la dirección esperada.
+
+#### Sorpresa 1: el umbral óptimo es 0.998, no un valor bajo
+
+Todo el proyecto venía razonando que bajar el umbral aumenta el recall (§4.1). Con mosaicos ocurre lo contrario: el corte útil está **altísimo**. El motivo está en la distribución que produce la agregación por máximo:
+
+| | mín. | p25 | mediana | máx. |
+|---|---|---|---|---|
+| Fotos **sin** grieta | 0.0131 | 0.0196 | 0.0253 | 0.9972 |
+| Fotos **con** grieta | 0.3466 | 1.0000 | 1.0000 | 1.0000 |
+
+**19 de las 30 fotos con grieta dan exactamente 1.0.** El máximo de 24 ventanas satura: basta con que una ventana esté segura para que el resultado se pegue al techo. La decisión ya no se toma entre «poco probable» y «muy probable», sino entre «saturado» y «no saturado», y ese límite vive en las milésimas superiores.
+
+#### Sorpresa 2: ese umbral es una casualidad, no un aprendizaje
+
+El oráculo alcanza F1 0.9831 con 0 falsos positivos, que sería el mejor número de toda la memoria. No se puede usar, y la razón la da la propia herramienta:
+
+```
+Margen de separacion del corte del oraculo
+  maximo     al negativo mas alto 0.0006 · al positivo mas bajo 0.0006
+  fraccion   al negativo mas alto 0.0417 · al positivo mas bajo 0.0417
+```
+
+El corte de 0.9977 pasa a **seis diezmilésimas** de la foto sana peor clasificada (0.99716). No ha encontrado una frontera entre dos clases: ha encontrado un hueco entre dos fotografías concretas de esta muestra. Cualquier fotografía nueva con una junta algo más marcada cae del otro lado. Un modelo que separa por 0.0006 no separa.
+
+La validación cruzada lo confirma por otra vía: 4 de los 5 pliegues eligen ~0.9977 y el quinto se va a 0.2124. Ese pliegue no está roto — está empatado: con una distribución tan bimodal, el F1 tiene dos óptimos casi idénticos, uno que lo acepta casi todo y otro que rechaza las falsas alarmas. El criterio no distingue entre extremos opuestos.
+
+#### Sorpresa 3: la regla «robusta» es la peor
+
+La fracción de ventanas parecía la opción sensata, y su oráculo confirma que hay un valor bueno (0.9508). Pero **fuera de pliegue rinde 0.8814, peor que no calibrar nada**, y solo 2 de 5 pliegues coinciden en el corte. Al mirar los datos se ve por qué no puede funcionar:
+
+- fotos sanas: 27 de 30 encienden **0** ventanas; las otras tres encienden 2, 4 y 4;
+- fotos con grieta: la mayoría encienden entre 9 y 16, pero cuatro encienden 0, 1, 4 y 4.
+
+Las dos clases **se solapan justo en la zona del corte**. No hay ningún número de ventanas que las separe, así que el valor elegido depende de qué fotos toquen en cada pliegue. Su margen de 0.0417 es setenta veces mayor que el del máximo y aun así no basta: un margen amplio en una frontera que atraviesa el solapamiento no sirve de nada.
+
+#### Conclusión: no se calibra
+
+**Se mantiene el umbral fijo en 0.5.** La ganancia cruzada era +0.0153 de F1 —un falso positivo de sesenta— sostenida sobre un margen de 0.0006, y la alternativa que parecía más sólida resultó peor que no hacer nada.
+
+Es un resultado negativo, y se documenta con el mismo detalle que uno positivo por dos razones. La primera es que **no adoptar una mejora aparente es en sí una decisión de ingeniería**, y sin la medición no habría forma de defenderla frente a quien viera el 0.9831 del oráculo y preguntara por qué no se usa. La segunda es que esa cifra existe, es reproducible y alguien podría reportarla de buena fe: la diferencia entre 0.9831 y 0.9355 no está en el modelo, está en si el umbral se eligió mirando o no las fotos en las que se mide.
+
+Queda además una observación de fondo para §5: que 19 de 30 fotos den exactamente 1.0 significa que **las probabilidades del modelo no están calibradas**. Se pueden usar para ordenar, no para leerlas como grados de confianza. La interfaz muestra «Probabilidad de grieta: 100 %», y ese número no debe interpretarse como certeza — solo como «muy por encima del umbral».
+
+
+### 4.8 La decisión final: un modelo por modo, y ningún selector
+
+Hasta esta fase la aplicación ofrecía un selector con tres modelos —ensemble, MobileNetV2 y TFLite int8— y dejaba la elección al usuario. Las mediciones de §4.6 y §4.7 permiten cerrar esa decisión, y el resultado es que **el selector desaparece**.
+
+#### Por qué un selector era la respuesta equivocada
+
+Ofrecer la elección parecía flexible, pero trasladaba al usuario una decisión que él no puede tomar bien: para elegir entre tres modelos hay que conocer sus curvas de recall y latencia, que están en esta memoria y no en la pantalla. Un inspector que abre la aplicación no tiene forma de saber que TFLite pierde 0.10 de recall. La flexibilidad aparente era, en la práctica, una forma de no comprometerse.
+
+Y sobre todo: **la respuesta está medida**. No depende del gusto de nadie.
+
+#### Las tres celdas, sobre las 60 fotografías propias
+
+Con mosaicos de 480 px, umbral 0.5:
+
+| Modelo | F1 | Recall | Precisión | FN | FP | s/foto | ms/fotograma |
+|---|---|---|---|---|---|---|---|
+| **MobileNetV2** | 0.9355 | 0.97 | 0.906 | 1 | 3 | 0.62 | 170.8 |
+| Ensemble | 0.9508 | 0.97 | 0.935 | 1 | 2 | 0.78 | 189.4 |
+| **TFLite int8** | 0.9123 | 0.87 | 0.963 | 4 | 1 | 0.28 | 4.9 |
+
+#### La decisión, y sus dos criterios opuestos
+
+Fotografía y vídeo imponen restricciones contrarias, y por eso ningún modelo único puede ser el correcto para ambos:
+
+- **Fotografía → MobileNetV2 + mosaicos.** Aquí se admite medio segundo de cálculo, así que manda el acierto. Se descarta TFLite porque pierde 0.10 de recall, es decir, tres grietas reales más sin detectar: exactamente el error que §4.1 argumenta que no hay que cometer. Y se descarta el ensemble porque su ventaja es +0.0153 de F1 —**un falso positivo de sesenta**— por un 26 % más de tiempo y un segundo modelo en memoria. Con n = 60 esa diferencia no es distinguible del ruido.
+- **Vídeo → TFLite int8.** Aquí hay 33 ms por fotograma para sostener 30 FPS y ninguno de los otros cabe: MobileNetV2 daría 6 FPS y el ensemble 5. Su menor recall por fotograma se compensa en parte con el suavizado temporal por mediana, que agrega varias observaciones de la misma escena — un lujo que la fotografía única no tiene.
+
+Es la misma pieza de razonamiento que aparece en §4.6 sobre el tamaño del mosaico: no hay un óptimo global, hay un óptimo por régimen, y encontrarlo exige medir en cada uno.
+
+#### Lo que se conserva y por qué
+
+El ensemble **no se borra del código**. Sigue disponible en `config.yaml` y en el comparador de latencias de la aplicación, porque una decisión documentada debe poder reproducirse: quien lea que el ensemble aporta +0.0153 tiene que poder comprobarlo. Lo que se elimina es la *pregunta al usuario*, no la *capacidad de medir*.
+
+La aplicación indica en todo momento qué modelo está usando y por qué, y si el artefacto esperado no está en disco repliega a otro y lo advierte, en lugar de fallar en silencio. El orden de repliegue también es distinto en cada modo, por la misma lógica: sin MobileNetV2, la fotografía prefiere el ensemble (recall 0.97) antes que TFLite (0.87); sin TFLite, el vídeo prefiere MobileNetV2 antes que el ensemble, porque este último solo añadiría latencia a un vídeo que ya va lento.
+
+#### El patrón que cierra las tres secciones
+
+§4.6, §4.7 y §4.8 comparten una forma. En las tres, la conclusión salió de comparar contra una línea base recalculada sobre la misma muestra, y en las tres esa comparación desactivó algo que parecía establecido:
+
+- el troceado reveló que la brecha de dominio era en buena parte un error de escala nuestro;
+- la calibración honesta reveló que un F1 de 0.9831 descansaba sobre 0.0006 de margen;
+- las dos juntas revelaron que la ventaja del ensemble era el error que compensaba.
+
+Ninguna de las tres necesitó una técnica avanzada. Las tres necesitaron medir la alternativa aburrida antes de aceptar la interesante.
+
+
+### 4.9 Degradación de escala en entrenamiento: la hipótesis que no se sostuvo
+
+§4.6 corrige el desajuste de escala en **inferencia**, troceando la fotografía, y eso cuesta 2.4× de tiempo. La continuación natural era atacarlo en **entrenamiento**: si el modelo aprende con grietas ya degradadas por una reducción fuerte, debería reconocerlas sin necesidad de trocear, y el coste se recuperaría.
+
+Se implementó (`construir_capa_degradacion`: reduce la imagen por un factor aleatorio de hasta 4× y la restaura, en el 50 % de los lotes) y se puso a prueba. **No funcionó**, y merece la pena contar cómo se comprobó, porque el resultado no era evidente de antemano.
+
+#### El diseño del experimento
+
+Dos entrenamientos **idénticos salvo en la variable de estudio**: misma semilla, mismo 25 % del dataset, mismas 3 + 2 épocas, misma configuración. Lo único distinto es la degradación.
+
+Se eligió deliberadamente una escala reducida —25 % de los datos, 5 épocas, unos 10 minutos por modelo— antes de comprometer las 2 h 10 min del entrenamiento completo. Una comprobación barata que puede descartar la hipótesis vale más que una cara que la confirma tarde.
+
+#### Resultado 1: no cambia nada dentro de distribución
+
+| | Val. accuracy | Val. recall | Val. precisión | Val. F1 | s/época |
+|---|---|---|---|---|---|
+| Control | 0.9656 | 0.9251 | 0.9904 | 0.9566 | 99.4 |
+| Degradado | 0.9674 | 0.9239 | 0.9964 | 0.9588 | 99.9 |
+
+Esto era lo primero que había que descartar: que la degradación mejorase en fotos reales a costa de hundirse en el dataset público habría significado cambiar un sesgo por el contrario. No ocurre — y el sobrecoste de la capa es del 0.5 %, despreciable.
+
+#### Resultado 2: tampoco cambia nada fuera de distribución
+
+Sobre las 60 fotografías propias:
+
+| Estrategia | Control | Degradado |
+|---|---|---|
+| **Imagen entera** | F1 0.8519 · recall 0.77 · 7 FN · 1 FP | F1 0.8462 · recall 0.73 · 8 FN · 0 FP |
+| **Mosaicos 480 px** | F1 0.9524 · recall 1.00 · 0 FN · 3 FP | F1 0.9524 · recall 1.00 · 0 FN · 3 FP |
+
+La fila de la imagen entera es donde debía notarse el efecto, y ahí el modelo degradado queda **ligeramente peor**, no mejor.
+
+#### Por qué esa diferencia no significa nada, y cómo se comprueba
+
+Un F1 de 0.8519 frente a 0.8462 invita a concluir que la degradación perjudica. Sería tan indebido como concluir que ayuda: la comparación correcta no es entre dos números agregados, sino **foto a foto**.
+
+```
+imagen_entera
+  fallan ambos modelos:                    7
+  solo falla el control (gana degradado):  1
+  solo falla el degradado (gana control):  1
+  McNemar exacto sobre 2 discordancias:    p = 1.000
+
+mosaicos_480px
+  ninguna discordancia: los dos modelos aciertan y fallan
+  exactamente en las mismas fotos
+```
+
+De 60 fotografías, los dos modelos **discrepan en dos**, una a favor de cada uno. Con mosaicos no discrepan en ninguna: emiten predicciones idénticas en las 60. La diferencia de F1 procede íntegramente de que una fotografía cambió de lado en cada dirección.
+
+La prueba de McNemar da p = 1.000, que es literalmente el resultado menos significativo posible. **La degradación de escala no tiene ningún efecto medible**, ni bueno ni malo.
+
+#### Decisión y su alcance
+
+**No se ejecuta el entrenamiento completo.** La comprobación de 20 minutos hizo exactamente su trabajo: ahorró 2 h 10 min de CPU que no habrían cambiado el resultado. El troceado sigue siendo necesario y su coste de 2.4× no se recupera.
+
+Los límites de esta conclusión, dichos con precisión:
+
+- Se probó **un** punto del espacio de diseño (factor 4.0, probabilidad 0.5). Factores mayores o degradación aplicada siempre podrían comportarse de otro modo.
+- Se probó con **5 épocas sobre el 25 % de los datos**. Los aumentos de datos a menudo tardan en rendir, porque añaden dificultad antes de añadir robustez. Es concebible que a 15 épocas sobre el dataset completo aparezca un efecto que aquí no se ve.
+
+Lo que sí puede afirmarse es lo que decide la cuestión práctica: **con el presupuesto disponible, esta vía no compite con el troceado**, que da +0.10 de recall de forma inmediata y sin entrenar nada.
+
+#### Un hallazgo lateral que sí merece seguimiento
+
+Ambos modelos del experimento —entrenados con la **cuarta parte** de los datos y **un tercio** de las épocas— alcanzan sobre las fotos propias con mosaicos **F1 0.9524 y recall 1.00 (0 falsos negativos)**, frente al 0.9355 y recall 0.97 del modelo de producción, que vio cuatro veces más datos durante quince épocas.
+
+Es una diferencia de una sola fotografía y no debe leerse como que entrenar menos sea mejor. Pero apunta en la misma dirección que §3.4 y §3.8: **entrenar más ajusta mejor el dominio público y no necesariamente el real**. Queda anotado en §8 como línea de trabajo, con una advertencia: comprobarlo exigiría un criterio de parada que mire a las fotos propias, y usarlas para decidir cuándo parar las convertiría en conjunto de validación — perdiendo la única medida honesta de generalización que tiene el proyecto. El experimento tendría que diseñarse con mucho cuidado.
+
+
 ---
 
 ## 5. Limitaciones
@@ -632,15 +914,19 @@ Un teléfono que «mejora» la foto puede estar borrando la grieta.
 
 El sistema responde «hay grieta / no hay grieta». La realidad estructural es un continuo: microfisuración superficial, fisura de retracción, fisura activa, grieta pasante. Estas categorías tienen implicaciones muy distintas y el sistema no las distingue.
 
-### 5.6 El módulo de riesgo no ha sido validado por un ingeniero
+### 5.6 Las probabilidades no están calibradas
+
+19 de las 30 fotografías con grieta obtienen exactamente **1.0** (§4.7). Con agregación por máximo sobre 24 ventanas basta con que una esté segura para saturar el resultado. Las probabilidades sirven para **ordenar** casos, no para leerse como grados de confianza: un 100 % significa «muy por encima del umbral», no «certeza». La interfaz las muestra tal cual, y esa es una limitación real de cara a un usuario no técnico.
+
+### 5.7 El módulo de riesgo no ha sido validado por un ingeniero
 
 Los umbrales de `config.yaml` se apoyan en criterios de la NSR-10 y en la práctica de inspección visual post-sismo, pero **no han sido revisados ni avalados por un ingeniero estructural matriculado**. Son una propuesta razonada, no un criterio profesional validado.
 
 El diseño mitiga esto tanto como se puede: los umbrales están fuera del código y cada regla cita el criterio que la motiva, de modo que un profesional puede revisarlos y recalibrarlos en minutos. Pero mientras esa revisión no ocurra, es una limitación abierta y debe presentarse como tal.
 
-### 5.7 El conjunto de fotos propias es pequeño
+### 5.8 El conjunto de fotos propias es pequeño
 
-Con 30–50 imágenes, los intervalos de confianza de las métricas son anchos. Un F1 de 0.85 sobre 40 imágenes es compatible con un valor real bastante peor. Sirve para detectar **fallos gruesos** de generalización, no para estimar el desempeño con precisión.
+Con 60 imágenes, los intervalos de confianza de las métricas siguen siendo anchos. La mejora de §4.6 (F1 0.8889 → 0.9508) equivale a detectar 5 grietas más: la dirección es clara y el mecanismo está explicado por una medición independiente —el factor de reducción—, pero la magnitud exacta no debe leerse con tres decimales. Sirve para detectar **fallos gruesos** de generalización, no para estimar el desempeño con precisión.
 
 ---
 
@@ -650,7 +936,7 @@ Con 30–50 imágenes, los intervalos de confianza de las métricas son anchos. 
 |---|---|---|
 | **Iluminación** | Luz uniforme y difusa, sin sombras duras ni contraluces | Falsos positivos en sombras; falsos negativos en zonas subexpuestas |
 | **Material** | Predominio de hormigón liso; ausencia de ladrillo, pañete, bahareque | Fallo sistemático en construcción informal |
-| **Escala** | Recortes a distancia aproximadamente constante | Degradación con encuadres amplios |
+| **Escala** | Recortes a distancia aproximadamente constante (mediana 227 × 227 px) | Degradación con encuadres amplios. **Corregido en §4.6**: buena parte del fallo no venía del dataset sino de reducir la foto entera a 160 px; el análisis por mosaicos lo resuelve sin reentrenar |
 | **Negativos fáciles** | Los negativos son superficies limpias, sin juntas, cables ni manchas | Falsas alarmas frecuentes en campo |
 | **Origen geográfico** | Infraestructura de Corea del Sur y Estados Unidos | Prácticas constructivas y patrones de deterioro distintos a los colombianos |
 | **Etiquetado binario** | Sin niveles de severidad | Impide graduar la respuesta |
@@ -716,13 +1002,17 @@ La diferencia entre ambos usos no está en la tecnología: está en cómo se pre
 En orden de impacto esperado sobre la utilidad real del sistema:
 
 1. **Deduplicar antes de repartir.** El hallazgo de §3.7 tiene una solución directa: agrupar las imágenes por hash perceptual **confirmado píxel a píxel** y asignar cada grupo entero a una sola partición. Es lo que hace `datos.split.agrupar_por_origen`, pero usando los píxeles como identificador de origen en lugar del nombre de archivo, que en este dataset no codifica nada. `scripts/analizar_fuga_datos.py` ya calcula los grupos; faltaría conectarlos al cargador. Es la mejora de menor esfuerzo y mayor efecto sobre la honestidad de las métricas.
-2. **Ampliar el dataset con construcción local**: ladrillo a la vista, pañete, bahareque, fotografiado en Bucaramanga con teléfonos corrientes. Es lo que más mejoraría la utilidad real, y también lo más laborioso.
-3. **Incorporar negativos difíciles**: juntas de dilatación, cables, manchas de humedad, marcas de encofrado. Es lo que más reduciría las falsas alarmas en campo.
-4. **Segmentación en vez de clasificación**: una U-Net ligera daría la máscara de la grieta y permitiría medir su longitud y trayectoria, no solo su presencia.
-5. **Referencia métrica**: un marcador ArUco impreso pegado junto a la grieta resolvería el problema de escala de §5.1 con una impresora y cinco minutos de trabajo. Es la mejora de mayor relación valor/esfuerzo de toda la lista.
-6. **Validación con un ingeniero estructural**: revisar y recalibrar los umbrales del motor de reglas. Convertiría §5.6 de limitación abierta en criterio avalado.
-7. **Aplicación móvil nativa** con el `.tflite` int8 ya exportado, para inspección en campo sin conectividad.
-8. **Estimación de incertidumbre** (*Monte Carlo dropout* o *deep ensembles*), para que el sistema pueda decir «no lo sé» en lugar de emitir una probabilidad sobre una imagen fuera de distribución.
+2. **Menos entrenamiento, no más.** Los dos modelos del experimento de §4.9, entrenados con la cuarta parte de los datos y un tercio de las épocas, igualaron o superaron al modelo de producción sobre las fotografías propias (F1 0.9524, recall 1.00). Es una diferencia de una fotografía y no concluye nada por sí sola, pero apunta a lo mismo que §3.4 y §3.8: entrenar más ajusta el dominio público, no el real. Comprobarlo exige diseñar un criterio de parada que **no** use las 60 fotos propias, so pena de convertirlas en conjunto de validación y perder la única medida honesta de generalización del proyecto.
+
+   *Descartado por medición:* la **degradación de escala en entrenamiento** (§4.9). Estaba implementada y parecía la continuación natural de §4.6, pero un experimento pareado mostró p = 1.000: los modelos con y sin ella emiten predicciones idénticas en las 60 fotografías. El código queda en el repositorio, desactivado, junto al resultado que lo desaconseja.
+
+3. **Ampliar el dataset con construcción local**: ladrillo a la vista, pañete, bahareque, fotografiado en Bucaramanga con teléfonos corrientes. Sigue siendo valioso, pero §4.6 lo desplaza de la primera posición: el modelo no fallaba por falta de ejemplos, sino por verlos a una escala que nunca había encontrado.
+4. **Incorporar negativos difíciles**: juntas de dilatación, cables, manchas de humedad, marcas de encofrado. Es lo que más reduciría las falsas alarmas en campo, y §4.6 sube su prioridad: con agregación por máximo sobre 24 ventanas, cada falso positivo del modelo tiene 24 oportunidades de manifestarse.
+5. **Segmentación en vez de clasificación**: una U-Net ligera daría la máscara de la grieta y permitiría medir su longitud y trayectoria, no solo su presencia.
+6. **Referencia métrica**: un marcador ArUco impreso pegado junto a la grieta resolvería el problema de escala de §5.1 con una impresora y cinco minutos de trabajo. Es la mejora de mayor relación valor/esfuerzo de toda la lista.
+7. **Validación con un ingeniero estructural**: revisar y recalibrar los umbrales del motor de reglas. Convertiría §5.7 de limitación abierta en criterio avalado.
+8. **Aplicación móvil nativa** con el `.tflite` int8 ya exportado, para inspección en campo sin conectividad.
+9. **Estimación de incertidumbre** (*Monte Carlo dropout* o *deep ensembles*), para que el sistema pueda decir «no lo sé» en lugar de emitir una probabilidad sobre una imagen fuera de distribución.
 
 ---
 
@@ -735,14 +1025,16 @@ Lo que **sí** puede afirmarse:
 - Detecta grietas en superficies de hormigón similares a las del entrenamiento con **F1 de 0.9423 sobre el conjunto depurado de duplicados** (275 falsos negativos sobre 2 667 grietas reales), frente al 0.9109 de una CNN propia entrenada desde cero (§3.1 y §3.7).
 - Corre en CPU, sin GPU, a **4.82 ms por imagen (207 img/s) con un artefacto de 1.74 MB**: 30.8× más rápido y 8.0× más pequeño que el modelo Keras del que procede (§3.2). La viabilidad en un dispositivo modesto está medida, no supuesta.
 - Se entrenó por completo en **4 h 5 min de CPU** para los tres modelos (§3.3), lo que lo hace reproducible sin infraestructura especial.
-- Produce un juicio de riesgo **explicable, auditable y recalibrable sin reentrenar**, verificado por 33 pruebas unitarias que incluyen propiedades de monotonía.
+- Produce un juicio de riesgo **explicable, auditable y recalibrable sin reentrenar**, verificado por 33 pruebas unitarias del motor de reglas, dentro de una suite de 145 que cubre también inclinometría, cámara y análisis por mosaicos.
 - Permite comprar recall a precio conocido: **97 grietas adicionales por 140 falsas alarmas** al bajar el umbral a 0.2495 (§4.1).
 - Mide la desviación respecto a la vertical con un **error medio de 0.039°** sobre fotografía real, validado con rotaciones controladas de ±2°, ±5° y ±10° (§3.6). Es trece veces mejor que el criterio de aceptación y respalda empíricamente las reglas R5 y R6.
-- Reduce la brecha con fotografías reales **sin reentrenar**: el ensemble de los dos modelos sube el F1 sobre fotos propias de 0.6667 a **0.8235** y elimina 4 de los 10 falsos negativos, por un 11 % de latencia adicional (§3.8).
+- Cierra buena parte de la brecha con fotografías reales **sin reentrenar ni un peso**: analizar la fotografía en mosaicos de 480 px, en lugar de reducirla entera a 160, sube el recall sobre las 60 fotos propias de **0.80 a 0.97** y baja los falsos negativos de 6 a 1 (§4.6). La causa no era el dominio, era una pérdida de escala que introducía nuestro propio preprocesado.
+- Localiza la evidencia, no solo la detecta: el troceado indica **en qué región** de la fotografía está la fisura, algo que la inferencia sobre la imagen completa no puede dar.
 
 Lo que **no** puede afirmarse:
 
-- **Que generalice a fotografías reales.** Sobre las 40 fotos propias, el F1 cae a 0.6667 y el recall a 0.50: se pierde la mitad de las grietas (§3.4). Y el modelo que gana en el dataset público es el que peor generaliza.
+- **Que generalice a fotografías reales sin ayuda.** Sobre las fotos propias, analizadas como el dataset público —imagen entera reducida a 160 px—, el F1 cae de 0.9423 a 0.8000 y el recall a 0.67 (§3.4, §4.6). El troceado lo recupera hasta 0.9355, pero eso es una corrección en inferencia, no un modelo que generalice por sí mismo.
+- **Que un F1 de 0.9831 sea alcanzable.** Existe un umbral que lo consigue sobre estas 60 fotografías, pero pasa a 0.0006 del peor negativo: no separa clases, separa dos fotos concretas (§4.7). La cifra honesta, con validación cruzada, es 0.9355 con el umbral fijo.
 - **Que el dataset público sea un conjunto de prueba honesto.** El 15.27 % de sus imágenes de prueba estaban duplicadas en entrenamiento, y los modelos las acertaban al 100 % (§3.7). Cualquier resultado publicado sobre este dataset sin deduplicar está inflado.
 - **Que la variante cuantizada pueda ajustarse al dominio de despliegue.** El int8 satura sus probabilidades fuera de distribución y ningún umbral recupera sus falsos negativos (§3.5).
 - **Que el módulo de inclinometría sea aplicable en la práctica.** Es preciso cuando funciona, pero **solo 1 de las 40 fotografías propias produjo una estimación fiable** (§3.6). Su precisión está demostrada; su cobertura, en un 2.5 %, no. Y con `n = 1` no se puede afirmar una precisión media poblacional.

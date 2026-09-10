@@ -80,6 +80,26 @@ def construir_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sin-pesos-clase", action="store_true", help="Desactiva el balanceo por pesos de clase."
     )
+    parser.add_argument(
+        "--nombre",
+        type=str,
+        default=None,
+        help=(
+            "Nombre del experimento. Determina los nombres de TODOS los artefactos "
+            "(modelo, checkpoints, historial, figuras), asi que darle uno distinto es "
+            "la forma de probar una variante sin sobrescribir el modelo bueno."
+        ),
+    )
+    parser.add_argument(
+        "--degradacion-escala",
+        type=float,
+        default=None,
+        metavar="FACTOR",
+        help=(
+            "Activa la degradacion de escala con el factor maximo indicado (ver §4.6). "
+            "Con 1.0 o menos queda desactivada. Anula lo que diga el YAML."
+        ),
+    )
     return parser
 
 
@@ -96,7 +116,29 @@ def main() -> int:
     fijar_semillas(semilla)
     info_dispositivo = detectar_dispositivo()
 
-    nombre = str(obtener(config, "transfer.nombre", "mobilenetv2"))
+    nombre = str(args.nombre or obtener(config, "transfer.nombre", "mobilenetv2"))
+
+    # La degradacion de escala se inyecta en la configuracion ya cargada, no se
+    # pasa como parametro suelto: asi viaja sola hasta crear_dataset y queda
+    # registrada en el resumen del experimento junto al resto de hiperparametros.
+    if args.degradacion_escala is not None:
+        aumento = config.setdefault("preproceso", {}).setdefault("aumento", {})
+        aumento["degradacion_escala"] = {
+            "activo": args.degradacion_escala > 1.0,
+            "factor_maximo": float(args.degradacion_escala),
+            "probabilidad": float(
+                obtener(config, "preproceso.aumento.degradacion_escala.probabilidad", 0.5)
+            ),
+        }
+
+    degradacion = obtener(config, "preproceso.aumento.degradacion_escala", {}) or {}
+    if degradacion.get("activo"):
+        print(
+            f"Degradacion de escala ACTIVA: factor hasta {degradacion.get('factor_maximo')}x "
+            f"en el {float(degradacion.get('probabilidad', 0.5)):.0%} de los lotes."
+        )
+    if nombre != str(obtener(config, "transfer.nombre", "mobilenetv2")):
+        print(f"Experimento '{nombre}': los artefactos NO sobrescriben los del modelo por defecto.")
     epocas_1 = int(args.epochs or obtener(config, "entrenamiento.epocas", 20))
     epocas_2 = int(args.epochs_ft or obtener(config, "transfer.fine_tuning.epocas", 10))
     batch = args.batch_size or obtener(config, "entrenamiento.batch_size", 32)

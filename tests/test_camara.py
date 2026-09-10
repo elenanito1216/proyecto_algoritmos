@@ -8,6 +8,8 @@ prueba que solo pasa cuando hay camara enchufada no es una prueba.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 
@@ -245,3 +247,70 @@ def test_normalizar_es_idempotente() -> None:
     # Aplicarlo dos veces no debe anadir otra vez "/video" ni el puerto.
     una = normalizar_url_celular("192.168.1.40:8080")
     assert normalizar_url_celular(una) == una
+
+
+# ---------------------------------------------------------------------------
+# Presentacion del modo video
+#
+# El video y el veredicto de riesgo tienen que verse a la vez. Apilados, un
+# stream vertical de telefono empuja el semaforo fuera de la pantalla, y quien
+# inspecciona pierde justo la relacion que necesita: que encuadre produjo que
+# resultado. Estas pruebas fijan esa decision de diseno para que no se deshaga
+# sin querer en un cambio posterior.
+# ---------------------------------------------------------------------------
+
+
+def _cargar_app() -> Any:
+    """Importa app/app.py como modulo sin ejecutar Streamlit.
+
+    Returns:
+        El modulo de la aplicacion.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    raiz = Path(__file__).resolve().parents[1]
+    ruta = raiz / "app" / "app.py"
+    spec = importlib.util.spec_from_file_location("app_bajo_prueba", ruta)
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    return modulo
+
+
+class _InclinacionFalsa:
+    """Sustituto minimo de ResultadoInclinacion para las tarjetas."""
+
+    fiable = True
+    confianza = 5
+    motivo_rechazo = None
+
+
+def test_las_tarjetas_se_apilan_en_una_columna_junto_al_video():
+    app = _cargar_app()
+    html = app._tarjetas_vivo(0.9, 1.2, _InclinacionFalsa(), 25.0, 5.0, 0.5, 0.01, 30.0, columnas=1)
+    assert "repeat(1,1fr)" in html
+
+
+def test_las_tarjetas_siguen_en_cuatro_columnas_por_defecto():
+    # El valor por defecto no cambia: hay otros sitios que las usan a lo ancho.
+    app = _cargar_app()
+    html = app._tarjetas_vivo(0.9, 1.2, _InclinacionFalsa(), 25.0, 5.0, 0.5, 0.01, 30.0)
+    assert "repeat(4,1fr)" in html
+
+
+def test_las_tarjetas_nunca_piden_cero_columnas():
+    # Una rejilla de 0 columnas no renderiza nada: el usuario veria el video sin
+    # ningun dato al lado y sin ningun error que lo explique.
+    app = _cargar_app()
+    html = app._tarjetas_vivo(0.9, 1.2, _InclinacionFalsa(), 25.0, 5.0, 0.5, 0.01, 30.0, columnas=0)
+    assert "repeat(1,1fr)" in html
+
+
+def test_las_cuatro_tarjetas_estan_presentes_en_ambas_disposiciones():
+    app = _cargar_app()
+    for columnas in (1, 4):
+        html = app._tarjetas_vivo(
+            0.9, 1.2, _InclinacionFalsa(), 25.0, 5.0, 0.5, 0.01, 30.0, columnas=columnas
+        )
+        for titulo in ("P(grieta) suavizada", "Desaplome", "Fotogramas", "Inferencia"):
+            assert titulo in html, f"falta '{titulo}' con {columnas} columnas"

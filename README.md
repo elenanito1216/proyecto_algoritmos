@@ -178,6 +178,55 @@ Necesita **al menos una foto con un elemento vertical largo, nítido y contrasta
 
 El límite `--max-imagenes` vale 200 por defecto. Si tienes más fotos que eso, el script **avisa** de cuántas deja fuera; súbelo para incluirlas todas. Conviene que las cubra todas porque los archivos se recorren en orden alfabético, y un límite corto procesaría solo las primeras subcarpetas.
 
+### 7 bis · Medir el efecto del análisis por mosaicos
+
+```bash
+python scripts/evaluar_mosaicos.py --config config.yaml
+```
+
+Compara analizar la fotografía entera con trocearla en ventanas del tamaño con el que se entrenó el modelo. Sobre 60 fotos propias sube el recall de **0.80 a 0.97** sin reentrenar nada: una foto de teléfono se reduce 7.5 veces para entrar al modelo, y una fisura fina no sobrevive a esa reducción. El razonamiento completo está en `reports/analisis.md` §4.6.
+
+El troceado viene activado por defecto en la aplicación y se puede desactivar o reajustar desde la barra lateral.
+
+### 7 ter · Comprobar si conviene mover el umbral
+
+```bash
+python scripts/calibrar_umbral.py --config config.yaml
+```
+
+Elige la regla de decisión con **validación cruzada estratificada**, no sobre las mismas fotos en las que después la mide. El resultado fue negativo y está documentado en §4.7: el umbral que parece óptimo (0.998, F1 0.9831) pasa a 0.0006 del peor negativo, así que **se mantiene el 0.5 fijo**. Un resultado negativo medido bien vale tanto como uno positivo.
+
+### 7 quater · Qué modelo usa cada modo
+
+La aplicación **no tiene selector de modelo**: elige ella, porque la respuesta está medida (§4.8).
+
+| Modo | Modelo | Por qué |
+|---|---|---|
+| Fotografía | MobileNetV2 + mosaicos | Manda el acierto: F1 0.936, recall 0.97 |
+| Vídeo en vivo | TFLite int8 | Manda la latencia: 4.9 ms, lo único que sostiene 30 FPS |
+
+El ensemble sigue en `config.yaml` y en el comparador de latencias, pero ya no se ofrece: con mosaicos solo aporta +0.015 de F1 —un falso positivo de sesenta— por un 26 % más de tiempo. Si falta el artefacto esperado, la app repliega a otro y lo advierte.
+
+### 7 quinquies · Degradación de escala: probada y descartada
+
+El trabajo futuro nº 2 del informe se implementó y **se ejecutó**. El resultado fue negativo y está en §4.9: los modelos entrenados con y sin degradación de escala emiten **predicciones idénticas** en las 60 fotografías propias (McNemar p = 1.000). El troceado de §4.6 sigue siendo necesario.
+
+La capa queda en el repositorio, desactivada, junto al experimento que la desaconseja. Para reproducirlo (unos 20 min, dos entrenamientos pareados):
+
+```bash
+python scripts/train_transfer.py --config config.yaml --subset 0.25 --epochs 3 --epochs-ft 2 --nombre escala_control
+```
+
+```bash
+python scripts/train_transfer.py --config config.yaml --subset 0.25 --epochs 3 --epochs-ft 2 --nombre escala_degradado --degradacion-escala 4.0
+```
+
+```bash
+python scripts/evaluar_mosaicos.py --config config.yaml --formato keras --modelo models/escala_degradado_finetuned.keras --lados 480
+```
+
+`--nombre` cambia el nombre de **todos** los artefactos, así que ningún experimento sobrescribe `models/mobilenetv2_finetuned.keras`.
+
 ### 8 · Lanzar la aplicación
 
 ```bash
@@ -250,7 +299,11 @@ crack-risk-assessment/
 │   ├── train_transfer.py
 │   ├── evaluate.py
 │   ├── export_tflite.py
-│   └── validar_inclinacion.py
+│   ├── validar_inclinacion.py
+│   ├── analizar_fuga_datos.py    # duplicados entre particiones (pHash + correlación)
+│   ├── evaluar_robustez.py       # TTA, ensemble y recalibración del umbral
+│   ├── evaluar_mosaicos.py       # imagen entera vs. análisis por ventanas
+│   └── calibrar_umbral.py        # umbral con validación cruzada, sin oráculo
 ├── src/
 │   ├── utils/                    # rutas, config, semillas, dispositivo
 │   ├── data/loader.py            # carga, split, augmentation

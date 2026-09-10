@@ -1,0 +1,160 @@
+{
+  "formato": "keras",
+  "modelo": "models/escala_degradado_finetuned.keras",
+  "umbral": 0.5,
+  "solape": 0.5,
+  "tamanos": {
+    "n": 60,
+    "alto_mediano": 1600,
+    "ancho_mediano": 1200,
+    "factor_reduccion_mediano": 7.5
+  },
+  "resultados": [
+    {
+      "estrategia": "imagen_entera",
+      "lado": null,
+      "lado_efectivo": null,
+      "metricas": {
+        "umbral": 0.5,
+        "n_muestras": 60,
+        "accuracy": 0.8666666666666667,
+        "precision": 1.0,
+        "recall": 0.7333333333333333,
+        "f1": 0.8461538461538461,
+        "especificidad": 1.0,
+        "balanced_accuracy": 0.8666666666666667,
+        "roc_auc": 0.951111111111111,
+        "pr_auc": 0.9598850390639009,
+        "matriz_confusion": {
+          "vn": 30,
+          "fp": 0,
+          "fn": 8,
+          "vp": 22
+        },
+        "matriz_confusion_lista": [
+          [
+            30,
+            0
+          ],
+          [
+            8,
+            22
+          ]
+        ],
+        "tasa_falsos_negativos": 0.26666666666666666,
+        "tasa_falsos_positivos": 0.0
+      },
+      "segundos_por_foto": 0.185,
+      "segundos_total": 11.2,
+      "ventanas_medianas": 1,
+      "errores": [
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.13 AM (1).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.1641,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.13 AM (2).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.2699,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.13 AM.jpeg",
+          "verdad": 1,
+          "probabilidad": 0.378,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.17 AM (3).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.2721,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.18 AM (3).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.4138,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.18 AM (4).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.1514,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.18 AM (5).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.1951,
+          "tipo": "falso_negativo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-15 at 11.17.18 AM (6).jpeg",
+          "verdad": 1,
+          "probabilidad": 0.1897,
+          "tipo": "falso_negativo"
+        }
+      ]
+    },
+    {
+      "estrategia": "mosaicos_480px",
+      "lado": 480,
+      "lado_efectivo": 480,
+      "metricas": {
+        "umbral": 0.5,
+        "n_muestras": 60,
+        "accuracy": 0.95,
+        "precision": 0.9090909090909091,
+        "recall": 1.0,
+        "f1": 0.9523809523809523,
+        "especificidad": 0.9,
+        "balanced_accuracy": 0.95,
+        "roc_auc": 0.99,
+        "pr_auc": 0.9896687318641342,
+        "matriz_confusion": {
+          "vn": 27,
+          "fp": 3,
+          "fn": 0,
+          "vp": 30
+        },
+        "matriz_confusion_lista": [
+          [
+            27,
+            3
+          ],
+          [
+            0,
+            30
+          ]
+        ],
+        "tasa_falsos_negativos": 0.0,
+        "tasa_falsos_positivos": 0.1
+      },
+      "segundos_por_foto": 0.481,
+      "segundos_total": 28.4,
+      "ventanas_medianas": 24,
+      "errores": [
+        {
+          "archivo": "WhatsApp Image 2026-08-16 at 9.59.37 AM (1).jpeg",
+          "verdad": 0,
+          "probabilidad": 0.9973,
+          "tipo": "falso_positivo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-08-16 at 9.59.37 AM (4).jpeg",
+          "verdad": 0,
+          "probabilidad": 0.9323,
+          "tipo": "falso_positivo"
+        },
+        {
+          "archivo": "WhatsApp Image 2026-09-09 at 10.54.36 AM (2).jpeg",
+          "verdad": 0,
+          "probabilidad": 0.9035,
+          "tipo": "falso_positivo"
+        }
+      ]
+    }
+  ]
+}

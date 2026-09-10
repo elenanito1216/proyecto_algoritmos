@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -403,3 +404,232 @@ def predecir_dataset(predictor: Predictor, dataset: Any) -> tuple[np.ndarray, np
     if not y_true:
         return np.empty(0), np.empty(0)
     return np.concatenate(y_true).astype(float), np.concatenate(y_prob).astype(float)
+
+
+# =============================================================================
+# INFERENCIA POR MOSAICOS
+#
+# El problema que resuelve
+# ------------------------
+# El modelo se entreno con parches cuya mediana es 227x227 px. Reducirlos a 160
+# es un factor 1.4x: una grieta de 3 px de ancho sobrevive como 2.1 px.
+#
+# Una fotografia de telefono mide 1200x1600. Reducirla ENTERA a 160 es un factor
+# 7.5x: esa misma grieta pasa a 0.4 px, es decir, desaparece en el filtrado
+# bilineal antes de que el modelo llegue a verla.
+#
+# Medido sobre el dataset de entrenamiento (n=400) y las fotos propias (n=40):
+#   entrenamiento  mediana  227x227   reduccion 1.4x
+#   propias        mediana 1200x1600  reduccion 7.5x
+#
+# Es decir: buena parte del "desplazamiento de dominio" que §6 atribuia al
+# material y la iluminacion es en realidad un artefacto de escala introducido
+# por nosotros mismos en el redimensionado.
+#
+# La correccion no exige reentrenar: basta con trocear la fotografia en
+# ventanas del tamano con el que el modelo aprendio y evaluar cada una. Cada
+# mosaico llega al modelo con la grieta a su escala original.
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class ResultadoMosaicos:
+    """Salida de :func:`predecir_por_mosaicos`.
+
+    Attributes:
+        probabilidad: Probabilidad agregada de la imagen completa.
+        probabilidades: Vector ``(N,)`` con la probabilidad de cada mosaico.
+        ventanas: Lista de ``(x0, y0, x1, y1)`` en pixeles de la imagen original.
+        milisegundos: Tiempo total de inferencia.
+        indice_maximo: Indice del mosaico con mayor probabilidad, o ``-1`` si no
+            hubo ninguno. Sirve para senalar en la imagen DONDE se vio la grieta,
+            informacion que la inferencia sobre la imagen entera no proporciona.
+        lado: Lado efectivo del mosaico en pixeles.
+    """
+
+    probabilidad: float
+    probabilidades: np.ndarray
+    ventanas: list[tuple[int, int, int, int]]
+    milisegundos: float
+    indice_maximo: int
+    lado: int
+
+
+def generar_ventanas(
+    alto: int, ancho: int, lado: int, solape: float = 0.5
+) -> list[tuple[int, int, int, int]]:
+    """Cubre una imagen con ventanas cuadradas solapadas.
+
+    El solape no es opcional: una grieta que cayera justo en la frontera entre
+    dos mosaicos quedaria partida en dos mitades, y ninguna de las dos seria
+    reconocible. Con un solape del 50% cualquier region del tamano del mosaico
+    aparece completa en al menos una ventana.
+
+    Si la imagen es mas pequena que el lado pedido, se devuelve una unica ventana
+    con la imagen entera: trocear no aportaria nada y solo anadiria coste.
+
+    Args:
+        alto: Alto de la imagen en pixeles.
+        ancho: Ancho de la imagen en pixeles.
+        lado: Lado del mosaico en pixeles.
+        solape: Fraccion de solape entre ventanas contiguas, en ``[0, 0.9]``.
+
+    Returns:
+        Lista de tuplas ``(x0, y0, x1, y1)`` con coordenadas de pixel, extremo
+        derecho excluido. Nunca esta vacia.
+    """
+    lado = max(1, int(lado))
+    solape = float(min(max(solape, 0.0), 0.9))
+
+    if alto <= lado or ancho <= lado:
+        return [(0, 0, int(ancho), int(alto))]
+
+    paso = max(1, int(round(lado * (1.0 - solape))))
+
+    def _inicios(dimension: int) -> list[int]:
+        posiciones = list(range(0, dimension - lado + 1, paso))
+        # La ultima ventana se ancla al borde para no dejar sin cubrir la franja
+        # final cuando la dimension no es multiplo del paso.
+        if posiciones[-1] + lado < dimension:
+            posiciones.append(dimension - lado)
+        return posiciones
+
+    return [
+        (x, y, x + lado, y + lado) for y in _inicios(alto) for x in _inicios(ancho)
+    ]
+
+
+def predecir_por_mosaicos(
+    predictor: Predictor,
+    imagen_rgb: np.ndarray,
+    config: dict[str, Any],
+    lado: int | None = None,
+    solape: float | None = None,
+    agregacion: str | None = None,
+    maximo_mosaicos: int | None = None,
+) -> ResultadoMosaicos:
+    """Analiza una imagen troceandola en ventanas a la escala de entrenamiento.
+
+    Los mosaicos se infieren en un unico lote. Agruparlos importa: el coste fijo
+    por llamada al modelo domina sobre el coste por imagen, asi que treinta
+    llamadas de un mosaico tardan varias veces mas que una llamada de treinta.
+
+    La agregacion por defecto es el maximo, y es la decision de diseno relevante:
+    una grieta ocupa una fraccion pequena de la fotografia, de modo que la mayoria
+    de los mosaicos son pared sana. Promediarlos diluiria la unica evidencia
+    positiva hasta hacerla invisible. El maximo formaliza el criterio "si algun
+    trozo tiene grieta, la imagen tiene grieta", que es tambien el criterio de un
+    inspector. El precio es asimetrico y hay que decirlo: con N mosaicos, N
+    oportunidades de falso positivo (§4.1 argumenta por que ese es el error que
+    conviene cometer en evaluacion estructural).
+
+    Args:
+        predictor: Predictor ya cargado.
+        imagen_rgb: Imagen RGB ``(H, W, 3)``.
+        config: Configuracion del proyecto.
+        lado: Lado del mosaico en pixeles. Por defecto ``app.mosaicos.lado_px``.
+        solape: Solape entre ventanas. Por defecto ``app.mosaicos.solape``.
+        agregacion: ``"maximo"`` o ``"media"``. Por defecto ``app.mosaicos.agregacion``.
+        maximo_mosaicos: Cota superior de ventanas a evaluar. Si se supera, se
+            aumenta el lado hasta cumplirla, en lugar de descartar zonas: perder
+            resolucion es preferible a dejar parte del muro sin mirar.
+
+    Returns:
+        Un :class:`ResultadoMosaicos`.
+    """
+    lado = int(lado if lado is not None else obtener(config, "app.mosaicos.lado_px", 320))
+    solape = float(solape if solape is not None else obtener(config, "app.mosaicos.solape", 0.5))
+    agregacion = str(
+        agregacion if agregacion is not None else obtener(config, "app.mosaicos.agregacion", "maximo")
+    ).lower()
+    maximo_mosaicos = int(
+        maximo_mosaicos
+        if maximo_mosaicos is not None
+        else obtener(config, "app.mosaicos.maximo_mosaicos", 64)
+    )
+
+    imagen = np.asarray(imagen_rgb)
+    alto, ancho = imagen.shape[:2]
+
+    ventanas = generar_ventanas(alto, ancho, lado, solape)
+    while len(ventanas) > maximo_mosaicos and lado < max(alto, ancho):
+        lado = int(lado * 1.5)
+        ventanas = generar_ventanas(alto, ancho, lado, solape)
+
+    lote = np.concatenate(
+        [preparar_imagen(imagen[y0:y1, x0:x1], config) for (x0, y0, x1, y1) in ventanas],
+        axis=0,
+    )
+    probabilidades, ms = predictor.predecir(lote)
+    probabilidades = np.asarray(probabilidades, dtype=np.float32).reshape(-1)
+
+    if agregacion == "media":
+        agregada = float(probabilidades.mean())
+    else:
+        agregada = float(probabilidades.max())
+
+    return ResultadoMosaicos(
+        probabilidad=agregada,
+        probabilidades=probabilidades,
+        ventanas=ventanas,
+        milisegundos=ms,
+        indice_maximo=int(np.argmax(probabilidades)) if probabilidades.size else -1,
+        lado=lado,
+    )
+
+# =============================================================================
+# QUE MODELO USA CADA MODO
+#
+# La aplicacion no ofrece un selector de modelo, y esa ausencia es una decision
+# de diseno, no una simplificacion. Las dos formas de uso imponen restricciones
+# opuestas y cada una tiene una respuesta medida en reports/analisis.md:
+#
+#   FOTOGRAFIA - se admite un segundo de calculo, manda el acierto.
+#     Con mosaicos de 480 px sobre las 60 fotos propias (§4.6):
+#       MobileNetV2  F1 0.9355  recall 0.97  1 FN  3 FP  0.62 s/foto
+#       Ensemble     F1 0.9508  recall 0.97  1 FN  2 FP  0.78 s/foto
+#       TFLite int8  F1 0.9123  recall 0.87  4 FN  1 FP  0.28 s/foto
+#
+#   VIDEO - hay 33 ms por fotograma para sostener 30 FPS, manda la latencia.
+#       TFLite int8   4.9 ms      MobileNetV2 170.8 ms      Ensemble 189.4 ms
+#
+# Pedirle al usuario que elija seria trasladarle una decision que la aplicacion
+# puede tomar mejor: la respuesta esta medida, no depende de su preferencia.
+# =============================================================================
+
+ETIQUETAS_MODELO: dict[str, str] = {
+    "ensemble": "Ensemble",
+    "keras": "MobileNetV2",
+    "tflite": "TFLite int8",
+}
+
+# Orden de repliegue cuando el modelo elegido para un modo no esta en disco. Se
+# prefiere degradar a otro antes que dejar la funcionalidad muerta, pero quien
+# llame debe advertir de que no se esta usando el que dicen las mediciones.
+REPLIEGUE_POR_MODO: dict[str, tuple[str, ...]] = {
+    "foto": ("keras", "ensemble", "tflite"),
+    "video": ("tflite", "keras", "ensemble"),
+}
+
+
+def elegir_modelo(
+    config: dict[str, Any], modo: str, disponibles: dict[str, bool]
+) -> str | None:
+    """Elige el formato de modelo que corresponde a un modo de uso.
+
+    Recibe la disponibilidad ya calculada en lugar de mirar el disco, de modo que
+    la decision es una funcion pura: se puede probar con todas las combinaciones
+    de artefactos presentes y ausentes sin tocar el sistema de archivos.
+
+    Args:
+        config: Configuracion del proyecto.
+        modo: ``"foto"`` o ``"video"``.
+        disponibles: Mapa ``{formato: existe_en_disco}``.
+
+    Returns:
+        ``"keras"``, ``"tflite"`` o ``"ensemble"``, o ``None`` si no hay ningun
+        artefacto disponible para ese modo.
+    """
+    preferido = str(obtener(config, f"app.modelos.{modo}", "") or "")
+    candidatos = (preferido, *REPLIEGUE_POR_MODO.get(modo, ()))
+    return next((f for f in candidatos if f and disponibles.get(f)), None)

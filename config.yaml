@@ -110,6 +110,35 @@ preproceso:
     brillo: 0.15
     traslacion: 0.05
 
+    # -------------------------------------------------------------------------
+    # DEGRADACION DE ESCALA
+    #
+    # §4.6 demuestra que la brecha con las fotografias propias es en buena parte
+    # un desajuste de escala: los parches de entrenamiento se reducen 1.4x al
+    # entrar al modelo y una foto de telefono se reduce 7.5x, lo que borra las
+    # fisuras finas antes de que el modelo las vea.
+    #
+    # El analisis por mosaicos lo corrige en INFERENCIA, a cambio de 2.4x de
+    # coste. Esta capa ataca la misma causa en ENTRENAMIENTO: reduce la imagen
+    # por un factor aleatorio y la restaura, de modo que el modelo aprenda a
+    # reconocer grietas ya degradadas. Si funciona, el troceado deja de ser
+    # necesario y se recupera el coste.
+    #
+    # Viene DESACTIVADA por defecto a proposito: activarla cambia el modelo, y
+    # todas las metricas del informe se generaron sin ella. Es un experimento
+    # que se lanza con --nombre propio para no pisar el modelo bueno:
+    #   python scripts/train_transfer.py --config config.yaml --nombre mobilenetv2_escala
+    # -------------------------------------------------------------------------
+    degradacion_escala:
+      activo: false
+      # 4.0 cubre el rango observado: las fotos propias sufren 7.5x frente al
+      # 1.4x del entrenamiento, es decir 5.3x de diferencia relativa.
+      factor_maximo: 4.0
+      # Fraccion de lotes degradados. El resto pasa intacto para que el modelo no
+      # olvide como es una grieta bien resuelta: se busca robustez a la escala,
+      # no sustituir un sesgo por el contrario.
+      probabilidad: 0.5
+
   # tf.data
   barajar_buffer: 2000
   cache: false             # pon false si el dataset no cabe en RAM
@@ -293,9 +322,37 @@ riesgo:
 app:
   titulo: "Evaluacion de Riesgo Estructural"
   subtitulo: "Deteccion de grietas e inclinacion en elementos estructurales"
-  # Modelo cargado por defecto. La app permite conmutar en vivo entre .keras y
-  # .tflite para comparar latencias delante del jurado.
-  modelo_por_defecto: "ensemble"  # "ensemble" | "keras" | "tflite"
+  # ---------------------------------------------------------------------------
+  # QUE MODELO USA CADA MODO
+  #
+  # La aplicacion NO ofrece un selector de modelo, y esa ausencia es una decision
+  # de diseno. Foto y video imponen restricciones opuestas, y cada una tiene una
+  # respuesta medida:
+  #
+  #   FOTOGRAFIA - se admite un segundo de calculo, manda el acierto.
+  #     Sobre las 60 fotos propias, con mosaicos de 480 px (§4.6):
+  #       MobileNetV2  F1 0.9355  recall 0.97  1 FN  3 FP  0.62 s/foto
+  #       Ensemble     F1 0.9508  recall 0.97  1 FN  2 FP  0.78 s/foto
+  #       TFLite int8  F1 0.9123  recall 0.87  4 FN  1 FP  0.28 s/foto
+  #     Se elige MobileNetV2: el ensemble solo aporta +0.0153 de F1 -un unico
+  #     falso positivo de sesenta, indistinguible del ruido con n=60- por un 26%
+  #     mas de tiempo, y mantener dos modelos en memoria por eso no se sostiene.
+  #     TFLite se descarta aqui porque pierde 0.10 de recall: tres grietas reales
+  #     mas sin detectar, que es exactamente el error que §4.1 dice no cometer.
+  #
+  #   VIDEO - hay 33 ms por fotograma, manda la latencia.
+  #     TFLite int8   4.9 ms  -> 30 FPS
+  #     MobileNetV2 170.8 ms  ->  6 FPS
+  #     Ensemble    189.4 ms  ->  5 FPS
+  #     Se elige TFLite: es el unico que sostiene video fluido. Su menor recall
+  #     por fotograma se compensa en parte con el suavizado temporal por mediana,
+  #     que agrega varias observaciones de la misma escena.
+  #
+  # Si el modelo elegido no esta en disco, la app repliega a otro y lo advierte.
+  # ---------------------------------------------------------------------------
+  modelos:
+    foto: "keras"     # "keras" | "ensemble" | "tflite"
+    video: "tflite"
   archivo_keras: "models/mobilenetv2_finetuned.keras"
   archivo_tflite: "models/mobilenetv2_int8.tflite"
   archivo_baseline: "models/baseline_cnn.keras"
@@ -303,12 +360,22 @@ app:
   # Ensemble: promedia las probabilidades de varios modelos .keras.
   #
   # Es el modo por defecto porque es el que mejor funciona sobre fotografias
-  # reales. Medido en reports/analisis.md (§3.8), sobre las 40 fotos propias:
-  #   MobileNetV2 sola : F1 0.6667, recall 0.50, 10 falsos negativos
-  #   Ensemble         : F1 0.8235, recall 0.70,  6 falsos negativos
+  # reales. Medido en reports/analisis.md (§3.8), sobre las 60 fotos propias y
+  # SIN analisis por mosaicos:
+  #   MobileNetV2 sola : F1 0.8000, recall 0.67, 10 falsos negativos
+  #   Ensemble         : F1 0.8889, recall 0.80,  6 falsos negativos
   # a cambio de un 11% de latencia (170.8 -> 189.4 ms de mediana). La linea base
   # es solo el 1.9% de los parametros pero aporta el 11% del tiempo: el numero
   # de parametros es un mal predictor de la latencia.
+  #
+  # ATENCION, esto cambia CON mosaicos activados (§4.6):
+  #   MobileNetV2 sola : F1 0.9355, recall 0.97, 1 FN, 3 FP, 0.62 s/foto
+  #   Ensemble         : F1 0.9508, recall 0.97, 1 FN, 2 FP, 0.78 s/foto
+  # La ventaja del ensemble cae de +0.0889 a +0.0153 de F1 -un unico falso
+  # positivo de sesenta- por un 26% mas de tiempo. Buena parte de lo que aportaba
+  # era compensar el error de escala que los mosaicos corrigen en su origen. Se
+  # conserva por defecto porque en el modo de VIDEO no hay troceado y ahi la
+  # ventaja de +0.0889 sigue vigente.
   #
   # Advertencia por si alguien lo evalua: sobre el conjunto de prueba PUBLICO el
   # ensemble empeora ligeramente (0.9423 -> 0.9376). Los dos modelos fallan en
@@ -325,6 +392,65 @@ app:
     # grieta (mas recall, menos precision). Medido: media 0.8235, maximo 0.8000.
     agregacion: "media"
   max_mb_subida: 10
+
+  # ---------------------------------------------------------------------------
+  # ANALISIS POR MOSAICOS
+  #
+  # El modelo aprendio con parches de mediana 227x227 px, que al reducirse a 160
+  # pierden un factor 1.4x. Una fotografia de telefono (mediana 1200x1600) pierde
+  # un factor 7.5x: una grieta de 3 px de ancho queda en 0.4 px y desaparece en
+  # el redimensionado ANTES de llegar al modelo.
+  #
+  # Trocear la fotografia en ventanas y evaluarlas por separado devuelve cada
+  # region a la escala con la que el modelo fue entrenado. Medido sobre las fotos
+  # propias, sin reentrenar nada (ver reports/analisis.md §4.6).
+  # ---------------------------------------------------------------------------
+  mosaicos:
+    activo: true
+
+    # Lado del mosaico. Medido con scripts/evaluar_mosaicos.py sobre las 60
+    # fotografias propias, con el ensemble y umbral 0.5:
+    #
+    #   estrategia        F1      recall  prec    FN  FP  ventanas  s/foto
+    #   imagen entera     0.8889  0.80    1.000    6   0     1        0.32
+    #   mosaicos 227 px   0.9180  0.93    0.903    2   3   140        2.27
+    #   mosaicos 320 px   0.9355  0.97    0.906    1   3    63        1.33
+    #   mosaicos 480 px   0.9508  0.97    0.935    1   2    24        0.78
+    #   mosaicos 640 px   0.9508  0.97    0.935    1   2    12        0.55
+    #
+    # La curva tiene un optimo interior, y eso es lo interesante: el mosaico NO
+    # debe igualar el tamano de los parches de entrenamiento (227 px), que es
+    # justo la peor de las cinco filas. Hay dos efectos opuestos. Mosaicos muy
+    # grandes reducen demasiado y borran la grieta; mosaicos muy pequenos la
+    # dejan sin contexto (una fisura reconocible necesita ver la pared que la
+    # rodea) y multiplican por seis las ocasiones de dar una falsa alarma.
+    #
+    # 480 y 640 empatan en metricas y fallan en las mismas tres fotos. Se elige
+    # 480 por dos razones: el unico falso negativo queda en p=0.222 en vez de
+    # p=0.071, es decir, mucho mas cerca de detectarse; y con 24 ventanas en vez
+    # de 12 el mapa de calor localiza la grieta con el doble de resolucion.
+    # Quien priorice latencia puede poner 640 y ahorrar un 30% del tiempo.
+    lado_px: 480
+
+    # Sin solape, una grieta que cayera en la frontera entre dos ventanas
+    # quedaria partida en dos mitades irreconocibles. Con 0.5, toda region del
+    # tamano del mosaico aparece entera en al menos una ventana.
+    solape: 0.5
+
+    # "maximo": si algun trozo tiene grieta, la imagen tiene grieta. Promediar
+    # diluiria la unica ventana positiva entre las veintitres de pared sana.
+    # El precio es asimetrico: N ventanas son N ocasiones de falso positivo
+    # (la precision baja de 1.000 a 0.935). §4.1 argumenta por que en evaluacion
+    # estructural ese es el error que conviene cometer.
+    agregacion: "maximo"
+
+    # Cota de coste. Al superarla se agranda el mosaico en vez de descartar
+    # zonas: perder resolucion es preferible a no mirar parte del muro.
+    maximo_mosaicos: 64
+
+    # Por debajo de este lado no se trocea. Una imagen asi ya esta en el rango de
+    # escala del entrenamiento, y trocearla solo anadiria falsos positivos.
+    lado_minimo_imagen: 600
 
   # ---------------------------------------------------------------------------
   # CAMARA EN VIVO
@@ -347,6 +473,14 @@ app:
     # la hace el telefono de forma nativa y OpenCV solo consume el stream: cero
     # dependencias nuevas y sin HTTPS.
     fuente: "equipo"
+    # Ancho en pixeles de la previsualizacion de video. NO afecta al analisis:
+    # el clasificador recibe siempre el recorte a resolucion completa.
+    #
+    # Existe porque un stream de telefono llega en vertical (1200x1600) y, a
+    # ancho de pagina, desplaza el semaforo de riesgo fuera de la pantalla. Quien
+    # inspecciona necesita ver a la vez lo que enfoca y el veredicto: si no, no
+    # puede saber que encuadre produjo que resultado.
+    ancho_vista: 400
     # URL del stream del telefono. Se puede escribir abreviada ("192.168.1.40:8080"):
     # la interfaz la completa. Puertos habituales: 8080 (IP Webcam), 4747 (DroidCam).
     url_celular: ""
