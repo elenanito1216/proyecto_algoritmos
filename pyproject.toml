@@ -22,7 +22,30 @@ extend-exclude = '''
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-exclude = [".venv", "data", "models", ".ipynb_checkpoints"]
+
+# Al recorrer un directorio, Ruff solo recoge .py, .pyi y .ipynb. Pero cuando se
+# le pasa un archivo POR RUTA asume que es Python y lo intenta parsear, sea lo
+# que sea. La extension de VS Code le pasa el archivo que este abierto en el
+# editor, asi que abrir README.md producia 2818 errores de sintaxis en un
+# documento que no tiene ni una linea de codigo.
+#
+# Se excluyen por extension los formatos de texto que conviven con el codigo, y
+# force-exclude hace que la exclusion valga TAMBIEN para archivos pasados por
+# ruta, que es justo el caso del editor y el de los ganchos de pre-commit.
+exclude = [
+    ".venv",
+    "data",
+    "models",
+    ".ipynb_checkpoints",
+    "*.md",
+    "*.txt",
+    "*.yaml",
+    "*.yml",
+    "*.toml",
+    "*.json",
+    "*.csv",
+]
+force-exclude = true
 
 [tool.ruff.lint]
 select = [
