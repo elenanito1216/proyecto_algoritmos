@@ -19,11 +19,11 @@ Está escrito para poder leerse sin ser especialista. Los términos técnicos se
 | **1. Decisiones** | Por qué se eligió cada pieza, y qué alternativas se descartaron |
 | **2. Cuánto cuesta calcular** | Análisis del costo computacional, exigido por la asignatura |
 | **3. Resultados** | Las cifras medidas, incluidas las que no favorecen al proyecto |
-| **4. Análisis de errores** | Dónde y por qué se equivoca el sistema. **Es la sección más extensa, y a propósito** |
+| **4. Análisis de errores** | Dónde y por qué se equivoca el sistema, y cómo se llegó a medir el ancho de la fisura. **Es la sección más extensa, y a propósito** |
 | **5–7. Límites** | Qué no puede hacer, qué sesgos arrastra y qué implicaciones éticas tiene |
 | **8–9. Cierre** | Qué se haría a continuación y qué se puede afirmar honestamente |
 
-### Los cinco hallazgos principales
+### Los seis hallazgos principales
 
 Si solo se dispone de tiempo para una parte, es esta. Cada hallazgo está desarrollado en la sección indicada.
 
@@ -35,11 +35,13 @@ Si solo se dispone de tiempo para una parte, es esta. Cada hallazgo está desarr
 
 **4. Una mejora anterior dejó de estar justificada (§4.8).** Combinar dos modelos aportaba una ventaja clara. Al corregir el hallazgo 2, esa ventaja se redujo a **un solo caso de sesenta**. Lo que aportaba era compensar el error que ahora está resuelto en su origen, así que se retiró.
 
-**5. La continuación lógica no funcionó (§4.9).** Entrenar el modelo con imágenes ya degradadas parecía el paso natural después del hallazgo 2. Se implementó, se midió con dos entrenamientos comparables y el resultado fue **exactamente nulo**. Se descartó antes de gastar las dos horas del entrenamiento completo.
+**5. La limitación más grave quedó resuelta a medias (§4.10).** El sistema ya no dice solo «hay grieta»: dice **46 cm de recorrido y 0.85 mm de ancho**. Hizo falta un marcador impreso de tamaño conocido en la escena, porque la escala de una fotografía **no está en la fotografía**. Por el camino aparecieron diez errores que producían números con aspecto de correctos, y cuatro los encontró el usuario mirando la pantalla.
+
+**6. La continuación lógica no funcionó (§4.9).** Entrenar el modelo con imágenes ya degradadas parecía el paso natural después del hallazgo 2. Se implementó, se midió con dos entrenamientos comparables y el resultado fue **exactamente nulo**. Se descartó antes de gastar las dos horas del entrenamiento completo.
 
 ### Una nota sobre el tono
 
-Tres de estos cinco hallazgos son **negativos**: un error propio y dos mejoras descartadas. Están contados con el mismo detalle que los positivos, y de forma deliberada.
+Tres de estos seis hallazgos son **negativos**: un error propio y dos mejoras descartadas. Están contados con el mismo detalle que los positivos, y de forma deliberada.
 
 El motivo es que un proyecto que solo reporta lo que funcionó no permite saber si lo que reporta es cierto. Saber **por qué no se usa** un resultado de 0.9831 que existe y es reproducible dice más sobre el trabajo que el propio 0.9831.
 
@@ -104,6 +106,61 @@ En su lugar, las reglas están escritas explícitamente en el código, y eso las
 - **explicables** — el resultado incluye qué reglas se activaron y con qué valores;
 - **corregibles** — todos los límites están en un archivo de configuración; un ingeniero puede ajustarlos sin tocar una línea de código ni volver a entrenar nada;
 - **verificables** — 33 pruebas automáticas comprueban su comportamiento, incluida una propiedad que debe cumplirse siempre: más evidencia de grieta nunca puede rebajar el nivel de riesgo.
+
+### 1.5 Por qué el desbalance de clases no se corrige borrando imágenes
+
+> **En pocas palabras.** El conjunto de datos tiene más paredes sanas que agrietadas, en proporción 1.44 a 1. Se compensa **ponderando el error durante el entrenamiento**, no eliminando imágenes: equivocarse en una grieta cuesta 1.44 veces más que equivocarse en una pared sana. Así se corrige el desequilibrio sin renunciar a ningún dato.
+
+#### El desequilibrio, medido
+
+| Conjunto | Con grieta | Sin grieta | Proporción | % de la clase positiva |
+|---|---|---|---|---|
+| Dataset público completo | 23 851 | 34 287 | 1.44 : 1 | 41.02 % |
+| Partición de entrenamiento | 16 695 | 24 001 | 1.44 : 1 | 41.02 % |
+| **Fotografías propias** | **30** | **30** | **1 : 1** | **50 %** |
+
+Dos observaciones sobre esta tabla. La primera es que **el desequilibrio es leve**: hay problemas de clasificación donde la clase rara aparece una vez cada cien o cada mil, y ese es un régimen completamente distinto. Aquí falta menos de un 10 % para el reparto perfecto.
+
+La segunda es que **el reparto en tres grupos conserva la proporción**. La partición es *estratificada*: divide cada clase por separado antes de juntarlas, de modo que entrenamiento, validación y examen tienen exactamente la misma composición. Si se repartieran al azar sin más, un grupo podría quedar con muchas más grietas que otro y las cifras no serían comparables entre sí.
+
+#### Cómo se corrige
+
+Cuando una clase es más frecuente, un modelo puede reducir su error simplemente inclinándose hacia ella. En el caso extremo, un detector que dijera *siempre* «no hay grieta» acertaría el 59 % de las veces sin haber aprendido nada — y sería inútil, porque **fallaría precisamente en los casos que importan**.
+
+La corrección empleada se llama **ponderación de clases**, y consiste en que el error no cuente lo mismo según dónde se cometa. Los valores se calculan automáticamente a partir de los datos y quedan registrados en el archivo de resultados de cada entrenamiento:
+
+```
+pesos de clase aplicados:
+  clase 0 (sin grieta):  0.848
+  clase 1 (con grieta):  1.219
+```
+
+Es decir: durante el entrenamiento, **pasar por alto una grieta cuesta 1.44 veces más** que dar una falsa alarma. Ese factor no se eligió a mano — es exactamente la proporción de la tabla anterior, calculada por el propio programa (`calcular_pesos_clase`, en `src/data/loader.py`) y controlada por `entrenamiento.pesos_clase: "auto"` en la configuración.
+
+La consecuencia práctica es que el modelo **no puede ganar nada inclinándose hacia la clase mayoritaria**: el sistema de puntuación ya lo compensa.
+
+#### La alternativa que se descartó, y por qué
+
+La forma intuitiva de balancear es eliminar imágenes de la clase abundante hasta igualar las dos. Se descartó por tres razones, en orden de peso:
+
+1. **Supone tirar 10 436 fotografías**, el 18 % del material disponible. Son imágenes reales y correctamente etiquetadas; su único defecto es pertenecer a la clase que más abunda. Un modelo entrenado con menos datos generaliza peor, y eso es un costo seguro a cambio de un beneficio que la ponderación ya proporciona.
+2. **No resuelve nada que siga abierto.** La ponderación corrige el mismo problema usando la totalidad de los datos. Son dos soluciones al mismo desequilibrio, y una de las dos no cuesta nada.
+3. **Tratándose de un desequilibrio de 1.44 : 1, no hay motivo para medidas drásticas.** El submuestreo se justifica ante proporciones de 1 a 50 o peores, donde la ponderación se vuelve inestable porque unos pocos ejemplos raros reciben pesos enormes. No es el caso.
+
+Queda anotado como decisión consciente y no como descuido: **el desequilibrio se midió, se trató y se documentó.**
+
+#### Una precaución que sí importa: nunca balancear el examen
+
+Si alguna vez se balancearan las clases, debería hacerse **solo en el grupo de entrenamiento**. Igualar las clases del grupo de examen cambiaría las cifras reportadas sin que el sistema hubiera mejorado en absoluto: la precisión depende de cuántas paredes sanas haya, así que retirar la mitad la inflaría artificialmente.
+
+Es una versión del mismo error que §3.7 documenta en el dataset público: **el conjunto de examen debe parecerse a la realidad, no ser cómodo**. En la realidad hay más paredes sanas que agrietadas, y el examen debe reflejarlo.
+
+Las 60 fotografías propias son 30 y 30 por una razón distinta y compatible: no se retiró nada para igualarlas, sino que se tomaron así desde el principio, de modo que cada clase tuviera suficientes ejemplos en una muestra necesariamente pequeña.
+
+#### Por qué esto también explica qué métricas se reportan
+
+El desequilibrio es la razón de fondo por la que este informe **no usa la exactitud como cifra principal**. Con un 59 % de ejemplos negativos, la exactitud puede parecer buena sin serlo. El F1 y el recall no se dejan engañar así, porque exigen acertar en la clase minoritaria — que aquí resulta ser, además, la peligrosa. Las definiciones están al inicio de la sección 3.
+
 
 ---
 
@@ -1007,19 +1064,173 @@ Ambos modelos del experimento —entrenados con la **cuarta parte** de los datos
 
 Es una diferencia de una sola fotografía y no debe leerse como que entrenar menos sea mejor. Pero apunta en la misma dirección que §3.4 y §3.8: **entrenar más ajusta mejor el dominio público y no necesariamente el real**. Queda anotado en §8 como línea de trabajo, con una advertencia: comprobarlo exigiría un criterio de parada que mire a las fotos propias, y usarlas para decidir cuándo parar las convertiría en conjunto de validación — perdiendo la única medida honesta de generalización que tiene el proyecto. El experimento tendría que diseñarse con mucho cuidado.
 
+### 4.10 De «hay grieta» a «cuánto mide»: la limitación más grave, resuelta a medias
+
+> **En pocas palabras.** La §5.1 declaraba que no poder medir el ancho de la fisura era la limitación más grave del proyecto, porque es el criterio con el que la NSR-10 gradúa el daño. Ahora el sistema mide: **46 cm de recorrido, 0.85 mm de ancho medio, 3.05 mm en el punto más abierto**. La condición es que haya un objeto de tamaño conocido en la escena. Sin él se reportan píxeles, y se dice.
+
+Esta sección documenta la funcionalidad completa y, sobre todo, **los diez errores que hubo que encontrar por el camino**. Ninguno lanzaba una excepción; todos producían números con dos decimales y aspecto de correctos.
+
+#### El problema en dos mitades
+
+Medir una grieta en una fotografía son dos problemas distintos, y conviene no mezclarlos:
+
+1. **La geometría**, en píxeles: cuánto recorre, qué ancho tiene, si va recta o se ramifica. Se resuelve con morfología matemática sobre la región que el clasificador señaló (§4.6).
+2. **La escala**, de píxeles a milímetros. **No se resuelve mirando la imagen**, porque el dato no está ahí: una fisura de 3 px puede tener 0.1 mm o 5 mm según a qué distancia se disparó. Hay que meter la referencia en la escena.
+
+La segunda mitad gobierna el diseño del módulo entero: **el sistema nunca estima la escala**. Hay una prueba llamada `test_nunca_inventa_una_escala_en_milimetros` que lo garantiza. Un dictamen con apariencia normativa y fundamento inventado es peor que no dar ninguno.
+
+#### Por qué visión clásica y no una segunda red
+
+Segmentar la fisura con una red exigiría máscaras etiquetadas píxel a píxel, que no existen en ningún conjunto público de este dominio y que el equipo no puede producir con garantías. Sobre una región donde ya se sabe que hay grieta, la morfología resuelve el problema sin datos adicionales y de forma auditable: cada paso se puede visualizar.
+
+---
+
+#### Los errores, y lo que cada uno enseñó
+
+**1. Tortuosidades de 0.25, que son geométricamente imposibles.** Una curva no puede ser más corta que la recta entre sus extremos: el mínimo es 1.0. El sistema estaba midiendo fragmentos de textura dispersos como si fueran un objeto. Se corrigió conservando un solo componente conectado, y **la comprobación quedó como prueba automática**: si la tortuosidad baja de 1, algo está mal por construcción.
+
+**2. «432 ramificaciones» en una grieta única.** El borde de una fisura segmentada es rugoso, y cada entrante genera una púa de dos o tres píxeles en el eje. Geométricamente son bifurcaciones. Se podan, y el recuento se sustituyó por un **índice de ramificación** = longitud total ÷ longitud principal, que vale 1.0 en una línea limpia y no depende del ruido del borde.
+
+**3. Sumar todas las ramas como «longitud de la grieta».** Daba 1544 px y una tortuosidad de 8.51 en una fisura que medía 617. Sumar un árbol como si fuera un camino no responde a «cuánto mide esta grieta» sino a «cuánto material fisurado hay». Se calcula el **trayecto más largo** del eje, por el método del diámetro de un grafo.
+
+**4. El filtro rechazaba las grietas diagonales.** Filtraba por la caja alineada con los ejes, y **una diagonal tiene caja casi cuadrada**. Habría descartado precisamente las fisuras que §4.4 identifica como estructuralmente significativas en columnas. Se usa la caja mínima rotada, que no depende de la orientación.
+
+**5. El ancho salía sistemáticamente de más, y la constante se pudo medir.** Sobre líneas sintéticas de ancho conocido:
+
+| Ancho real | 3 | 5 | 7 | 9 | 11 |
+|---|---|---|---|---|---|
+| Medido | 6.00 | 8.00 | 10.00 | 12.00 | 14.00 |
+| **Sesgo** | **+3.00** | **+3.00** | **+3.00** | **+3.00** | **+3.00** |
+
+Que sea una **constante y no un porcentaje** es lo que permite corregirlo restando. Y que importe se ve en el extremo del rango: sin corregir, una fisura de 3 px se reportaba con el doble de su ancho, justo en el tamaño donde se decide si es capilar o es grieta. Quedó fijado en una prueba, porque depende del núcleo de limpieza y cambiarlo lo invalidaría.
+
+Quedó medido también el **rango útil: de 3 a 11 px**. A 13 px el método deja de detectar, porque el núcleo del *black-hat* ya no es lo bastante mayor que la fisura.
+
+**6. La ventana del clasificador truncaba la grieta.** Los mosaicos de §4.6 miden 480 px y una fisura recorre la fotografía entera. Medir dentro de una sola ventana perdía parte del recorrido:
+
+| Foto | En un mosaico | En la región marcada | Diferencia |
+|---|---|---|---|
+| 13 AM (1) | 617 px | 969 px | +57 % |
+| .17.14 AM | 143 px | 311 px | +118 % |
+| 17 AM (1) | 149 px | 831 px | **+456 %** |
+
+La corrección obvia —medir sobre la fotografía completa— **tampoco funciona**: se probó, y en una foto daba 136 px donde la región marcada daba 256, porque sin acotar la textura de otras zonas compite con la fisura y a veces gana. Lo que sirve es la zona que el clasificador señaló, extendida a las ventanas **contiguas** que también disparan.
+
+**7. La segmentación parte la grieta en trozos.** Donde la fisura se afina o la luz la disimula, el umbral la pierde. Una grieta que recorría los 1600 px de la imagen aparecía rota en cuatro fragmentos:
+
+```
+fragmento 1   y  759 -> 1443       fragmento 3   y  389 ->  769
+fragmento 2   y    0 ->  497       fragmento 4   y 1367 -> 1600
+```
+
+Quedarse con el mayor —que es lo que arreglaba el error 1— reportaba **969 px en una grieta que medía 2203**. Se unen los fragmentos cuyos huecos son pequeños (los medidos iban de 6 a 15 px), y la unión es transitiva, de modo que una cadena de saltos cortos recompone la grieta entera sin permitir un salto largo.
+
+Dos precauciones decidían si esto funcionaba: la dilatación se aplica **solo a los candidatos ya filtrados** —sobre la máscara en bruto, con 2104 componentes, fusionaría la grieta con toda la textura del muro— y **decide qué se une, no engorda la máscara**, porque devolver la máscara dilatada inflaría los anchos y rompería la calibración del error 5.
+
+**8. Unir fragmentos encadenaba la textura del pañete.** Este lo encontró el usuario mirando la pantalla, no las pruebas. La elongación no basta para distinguir una grieta de una red de textura: **una malla que ocupa una franja alargada tiene elongación alta**. Lo que sí las distingue es que una línea cumple `área = largo × ancho` y una malla no:
+
+| Componente | Área | Largo | Ancho | Área ÷ (largo × ancho) |
+|---|---|---|---|---|
+| Malla de textura | 73 247 | 556 | 5.7 | **23.1** |
+| Grieta real | 3 320 | 442 | 4.2 | 1.8 |
+| Grieta real | 1 682 | 163 | 4.1 | 2.5 |
+
+El cociente no depende del tamaño ni de la orientación, lo que permite usarlo sin recalibrar en cada fotografía.
+
+**9. Aun así, la unión podía encadenar 22 trozos de textura.** Se añadieron **guardarraíles de verosimilitud**, con el mismo criterio que los de inclinometría de §4.5: una grieta serpentea, pero no recorre siete veces la distancia entre sus extremos; se ramifica, pero no se multiplica por veinte. Superado el límite, se descarta la unión, se mide solo el tramo dominante **y se avisa de que el recorrido puede quedarse corto** — porque quedarse con el tramo dominante corta las grietas reales, que es el fallo que la unión vino a resolver.
+
+Efecto sobre las 27 fotografías propias medibles:
+
+| | Inicial | Tras el filtro de maraña | Tras los guardarraíles |
+|---|---|---|---|
+| Peor ramificación | 23.28 | 4.94 | **4.36** |
+| Peor tortuosidad | 10.05 | 6.93 | **4.09** |
+
+**10. La medición tardaba 5.5 segundos.** Al perfilarla, el 80 % se iba en la poda de púas, que comparaba cada tramo contra la imagen entera miles de veces. Vectorizada, y acotando la esqueletización a la caja que envuelve la fisura:
+
+| | Antes | Después |
+|---|---|---|
+| Poda de púas | 4410 ms | **95 ms** |
+| Medición completa | 5544 ms | **64–883 ms** |
+
+Con resultados idénticos.
+
+---
+
+#### La escala: meter la referencia en la escena
+
+Se fotografía junto a la grieta un **marcador ArUco** impreso de tamaño conocido. El sistema lo localiza, mide su lado en píxeles y obtiene la equivalencia. La demostración de que funciona es que **la medida en milímetros no cambia con la distancia**, aunque la medida en píxeles sí:
+
+| La foto se toma… | Marcador | Ancho en píxeles | Ancho en mm |
+|---|---|---|---|
+| De cerca | 299 px | 4.1 px | 0.68 mm |
+| A doble distancia | 149 px | 2.6 px | 0.88 mm |
+| A triple distancia | 99 px | 1.7 px | 0.84 mm |
+
+Se eligió un marcador y no una moneda o una regla por tres motivos: se detecta automáticamente, **lleva codificada su propia identidad** —el sistema sabe qué marcador es y por tanto cuánto mide— y al ser cuadrado **permite detectar la perspectiva**, que es la principal fuente de error. Si se fotografía en ángulo sale como un rombo, y el sistema lo advierte.
+
+##### Dos hallazgos sobre el marcador físico
+
+**Un borde blanco fino es peor que ninguno.** Medido sobre tres fondos distintos:
+
+| Borde blanco al recortar | Error en la medida |
+|---|---|
+| 0 mm (al ras) | −0.4 % |
+| 0.5 a 3 mm | **+3 % a +14 %** |
+| ≥ 4 mm | −0.4 % |
+
+Con una franja fina el detector se agarra al filo del papel en vez de al del cuadro negro. Y el error es **siempre positivo**: un marcador que parece mayor hace que cada píxel valga menos, de modo que **las grietas se reportarían más estrechas de lo que son**, que es la dirección peligrosa. La hoja impresa lleva la instrucción de dejar 1 cm de blanco.
+
+**Un marcador reflejado no se puede leer.** El modo de vídeo volteaba siempre el fotograma en horizontal —pensando en una webcam que apunta al usuario— y buscaba el marcador después, de modo que **el indicador de escala en vivo no podía encenderse nunca**. El patrón invertido no existe en el diccionario. Los giros de 90 y 180 grados sí funcionan, porque el formato es invariante a la rotación por diseño. El espejo pasó a ser un control, desactivado por defecto.
+
+##### La resolución pone el límite, y hay que decirlo
+
+La misma pared, medida a tres resoluciones:
+
+| Resolución | Ancho máximo | Ancho medio |
+|---|---|---|
+| Webcam 640 × 480 | **7.97 mm** | 1.28 mm |
+| Celular 1280 × 720 | 3.46 mm | 0.88 mm |
+| Celular nativo 1200 × 1600 | **3.05 mm** | 0.78 mm |
+
+La misma grieta, de 3 a 8 mm. El motivo es que la segmentación acierta el borde con un margen de un píxel, y a 640 × 480 **un píxel vale medio milímetro**: la cifra no puede ser mejor que eso, por muchos decimales que se escriban.
+
+Por eso la interfaz muestra siempre la incertidumbre junto al número —`0.78 mm ± 0.19 mm`— y advierte cuando el margen supera el 25 % del ancho medido. El aviso es específico: *el recorrido y la forma siguen siendo válidos, el ancho no*. A resolución nativa del teléfono el aviso no aparece.
+
+---
+
+#### Qué queda sin resolver
+
+- **Sin marcador no hay milímetros.** No es una carencia que se pueda programar: el dato no está en la imagen.
+- **La escala solo vale en el plano y a la distancia del marcador.** Si la grieta está en otro plano de la escena, la equivalencia se degrada. El sistema avisa cuando los ve separados, pero no lo corrige.
+- **El rango útil es de 3 a 11 px de ancho.** Fuera de él hay que ajustar el núcleo del *black-hat*.
+- **En dos de las 27 fotografías el guardarraíl tuvo que descartar la unión**, con lo que el recorrido reportado se queda corto. Es el modo de fallo conocido de esta funcionalidad.
+
+#### La lección, que es la misma de siempre
+
+De los diez errores, **cuatro los encontró el usuario mirando la pantalla, no las pruebas**: la ventana que truncaba la grieta, los fragmentos sin unir, la maraña de textura y el vídeo invertido. Las pruebas sintéticas verificaban que el algoritmo medía bien **lo que se le daba**; ninguna comprobaba que se le estuviera dando lo correcto.
+
+Es el mismo patrón que §4.5, donde el fallo de la inclinometría apareció usando la aplicación. Una interfaz que enseña el trabajo intermedio —la máscara, el eje, la región analizada— no es un lujo: es lo que convierte un número plausible en un número auditable.
+
+
 ---
 
 ## 5. Limitaciones
 
-### 5.1 No se puede medir el ancho real de la grieta
+### 5.1 El ancho solo se puede medir con una referencia en la escena
 
-Es la limitación más grave, y conviene declararla antes que ninguna otra porque afecta a la utilidad del sistema entero.
+*Esta sección declaraba la limitación más grave del proyecto: que el sistema no podía medir el ancho de la fisura, que es el criterio con el que la NSR-10 gradúa el daño. **§4.10 la resuelve a medias**, y conviene precisar qué mitad.*
 
-Sin una **referencia métrica** en la escena —una regla, una moneda, un objeto de dimensión conocida—, la escala de la imagen es desconocida. Una fisura que ocupa 3 píxeles puede tener 0.1 mm o 5 mm de ancho según la distancia a la que se tomó la foto.
+Sin una **referencia métrica** en la escena, la escala de la imagen es desconocida. Una fisura que ocupa 3 píxeles puede tener 0.1 mm o 5 mm según la distancia a la que se tomó la foto. Eso no es un defecto de implementación: **la información no está en la imagen**, y ningún procesamiento puede recuperarla.
 
-El problema es que **el ancho de fisura es exactamente el criterio que usa la NSR-10** para clasificar la severidad del daño. El sistema puede decir «hay una grieta diagonal en esta columna», que es información valiosa para priorizar; **no** puede decir «esta grieta tiene 0.4 mm y por tanto está dentro de lo admisible», que es lo que un ingeniero necesita para dictaminar.
+Lo que §4.10 aporta es meterla: fotografiando junto a la grieta un marcador impreso de tamaño conocido, el sistema obtiene la equivalencia y mide en milímetros. Verificado: la medida en milímetros no cambia al alejar la cámara, aunque la medida en píxeles se reduzca a la mitad.
 
-Esta brecha es estructural, no un defecto de implementación. Resolverla exigiría fotogrametría con referencia conocida o un sensor de profundidad, y queda fuera del alcance del proyecto.
+Lo que sigue sin resolverse, y es lo que conviene tener presente:
+
+- **Sin marcador, no hay milímetros.** El sistema lo dice y reporta píxeles; no estima.
+- **La equivalencia solo vale en el plano y a la distancia del marcador.** Si la grieta está en otro plano de la escena, se degrada. El sistema avisa cuando los ve separados, pero no lo corrige.
+- **La resolución pone un suelo a la precisión.** A 640 × 480 un píxel vale medio milímetro, y ninguna cifra puede ser mejor que eso. La interfaz muestra la incertidumbre y advierte cuando supera el 25 % del ancho.
+- **Sigue sin ser un dictamen.** Que el sistema diga «3.05 ± 0.19 mm» permite priorizar y comparar; no sustituye la inspección de un ingeniero, que valora además el elemento, su función estructural y el patrón de fisuración del conjunto.
 
 ### 5.2 La perspectiva sesga la medida del ángulo
 
@@ -1068,6 +1279,7 @@ Con 60 imágenes, los intervalos de confianza de las métricas siguen siendo anc
 | **Escala** | Recortes a distancia aproximadamente constante (mediana 227 × 227 px) | Degradación con encuadres amplios. **Corregido en §4.6**: buena parte del fallo no venía del dataset sino de reducir la foto entera a 160 px; el análisis por mosaicos lo resuelve sin reentrenar |
 | **Negativos fáciles** | Los negativos son superficies limpias, sin juntas, cables ni manchas | Falsas alarmas frecuentes en campo |
 | **Origen geográfico** | Infraestructura de Corea del Sur y Estados Unidos | Prácticas constructivas y patrones de deterioro distintos a los colombianos |
+| **Desequilibrio de clases** | 1.44 paredes sanas por cada agrietada (41.02 % de positivas) | Sin corregir, el modelo se inclinaría hacia «no hay grieta». **Tratado** con ponderación de clases (§1.5) |
 | **Etiquetado binario** | Sin niveles de severidad | Impide graduar la respuesta |
 | **Posible fuga de datos** | Parches recortados de pocas fotografías madre | Métricas infladas si el reparto es aleatorio |
 
@@ -1137,8 +1349,8 @@ En orden de impacto esperado sobre la utilidad real del sistema:
 
 3. **Ampliar el dataset con construcción local**: ladrillo a la vista, pañete, bahareque, fotografiado en Bucaramanga con teléfonos corrientes. Sigue siendo valioso, pero §4.6 lo desplaza de la primera posición: el modelo no fallaba por falta de ejemplos, sino por verlos a una escala que nunca había encontrado.
 4. **Incorporar negativos difíciles**: juntas de dilatación, cables, manchas de humedad, marcas de encofrado. Es lo que más reduciría las falsas alarmas en campo, y §4.6 sube su prioridad: con agregación por máximo sobre 24 ventanas, cada falso positivo del modelo tiene 24 oportunidades de manifestarse.
-5. **Segmentación en vez de clasificación**: una U-Net ligera daría la máscara de la grieta y permitiría medir su longitud y trayectoria, no solo su presencia.
-6. **Referencia métrica**: un marcador ArUco impreso pegado junto a la grieta resolvería el problema de escala de §5.1 con una impresora y cinco minutos de trabajo. Es la mejora de mayor relación valor/esfuerzo de toda la lista.
+5. **Segmentación aprendida en vez de morfológica**: §4.10 extrae la geometría con visión clásica, que funciona pero necesita guardarraíles para no confundir la textura del pañete con una fisura. Una U-Net ligera lo haría mejor — a cambio de máscaras etiquetadas píxel a píxel, que no existen en ningún conjunto público de este dominio y que el equipo no puede producir con garantías. Ese es el coste real de la mejora, y es alto.
+6. ~~**Referencia métrica**~~ — **hecho** (§4.10). Era, como decía esta lista, la mejora de mayor relación valor/esfuerzo: una impresora y un marcador convirtieron la limitación más grave del proyecto en una medida con su incertidumbre declarada. Lo que queda abierto es corregir la perspectiva cuando el marcador y la grieta no están en el mismo plano, que hoy solo se advierte.
 7. **Validación con un ingeniero estructural**: revisar y recalibrar los umbrales del motor de reglas. Convertiría §5.7 de limitación abierta en criterio avalado.
 8. **Aplicación móvil nativa** con el `.tflite` int8 ya exportado, para inspección en campo sin conectividad.
 9. **Estimación de incertidumbre** (*Monte Carlo dropout* o *deep ensembles*), para que el sistema pueda decir «no lo sé» en lugar de emitir una probabilidad sobre una imagen fuera de distribución.
@@ -1161,6 +1373,7 @@ Lo que **sí** puede afirmarse:
 - Mide la desviación respecto a la vertical con un **error medio de 0.039°** sobre fotografía real, validado con rotaciones controladas de ±2°, ±5° y ±10° (§3.6). Es trece veces mejor que el criterio de aceptación y respalda empíricamente las reglas R5 y R6.
 - Cierra buena parte de la brecha con fotografías reales **sin reentrenar ni un peso**: analizar la fotografía en mosaicos de 480 px, en lugar de reducirla entera a 160, sube el recall sobre las 60 fotos propias de **0.80 a 0.97** y baja los falsos negativos de 6 a 1 (§4.6). La causa no era el dominio, era una pérdida de escala que introducía nuestro propio preprocesado.
 - Localiza la evidencia, no solo la detecta: el troceado indica **en qué región** de la fotografía está la fisura, algo que la inferencia sobre la imagen completa no puede dar.
+- **Mide la fisura**, con un marcador de tamaño conocido en la escena: recorrido, ancho medio y máximo, forma y ramificación, con la incertidumbre declarada junto a cada cifra (§4.10). Sin marcador reporta píxeles y lo advierte; no estima la escala en ningún caso.
 
 Lo que **no** puede afirmarse:
 
@@ -1171,7 +1384,7 @@ Lo que **no** puede afirmarse:
 - **Que el módulo de inclinometría sea aplicable en la práctica.** Es preciso cuando funciona, pero **solo 1 de las 40 fotografías propias produjo una estimación fiable** (§3.6). Su precisión está demostrada; su cobertura, en un 2.5 %, no. Y con `n = 1` no se puede afirmar una precisión media poblacional.
 - Que funcione en materiales y contextos constructivos no representados en el dataset.
 - Que sus niveles de riesgo equivalgan a un criterio de ingeniería validado.
-- Que pueda medir el ancho de fisura, que es lo que la norma exige para dictaminar.
+- Que pueda medir el ancho de fisura **sin una referencia de tamaño en la escena**. Con marcador sí mide (§4.10), y con su incertidumbre; sin él, el dato no existe en la imagen.
 - Que sea seguro usarlo como base para decidir si una edificación es habitable.
 
 La distancia entre ambas listas no es un defecto del trabajo: **es el trabajo**. Un proyecto de aprendizaje automático que solo reporta su exactitud está contando la mitad de la historia, y en un dominio donde el error se paga en vidas, la mitad que falta es la que importa.

@@ -306,3 +306,83 @@ def test_un_modo_desconocido_no_inventa_un_modelo():
 def test_hay_etiqueta_legible_para_cada_formato():
     for formato in ("keras", "tflite", "ensemble"):
         assert ETIQUETAS_MODELO[formato]
+
+
+# ---------------------------------------------------------------------------
+# region_activa
+#
+# La ventana de mayor probabilidad no contiene la grieta entera: mide 480 px y
+# una fisura recorre la fotografia. Medir solo ahi dentro la truncaba un 36%
+# sobre las fotos propias. Estas pruebas fijan el comportamiento correcto.
+# ---------------------------------------------------------------------------
+
+
+def _resultado(
+    ventanas: list[tuple[int, int, int, int]], probabilidades: list[float]
+) -> ResultadoMosaicos:
+    """Construye un ResultadoMosaicos con ventanas y probabilidades dadas.
+
+    Args:
+        ventanas: Ventanas analizadas.
+        probabilidades: Probabilidad de cada una.
+
+    Returns:
+        El resultado listo para consultar.
+    """
+    probas = np.array(probabilidades, dtype=np.float32)
+    return ResultadoMosaicos(
+        probabilidad=float(probas.max()),
+        probabilidades=probas,
+        ventanas=ventanas,
+        milisegundos=0.0,
+        indice_maximo=int(np.argmax(probas)),
+        lado=100,
+    )
+
+
+def test_la_region_abarca_todas_las_ventanas_activas_contiguas():
+    # Tres ventanas en columna, todas positivas: la region debe cubrir las tres.
+    resultado = _resultado(
+        [(0, 0, 100, 100), (0, 50, 100, 150), (0, 100, 100, 200)], [0.9, 0.8, 0.7]
+    )
+    assert resultado.region_activa(0.5) == (0, 0, 100, 200)
+
+
+def test_la_region_es_mayor_que_una_sola_ventana():
+    resultado = _resultado([(0, 0, 100, 100), (0, 50, 100, 150)], [0.9, 0.8])
+    x0, y0, x1, y1 = resultado.region_activa(0.5)
+    assert (x1 - x0) * (y1 - y0) > 100 * 100
+
+
+def test_la_region_excluye_las_ventanas_que_no_disparan():
+    resultado = _resultado(
+        [(0, 0, 100, 100), (0, 50, 100, 150), (0, 100, 100, 200)], [0.9, 0.8, 0.1]
+    )
+    assert resultado.region_activa(0.5) == (0, 0, 100, 150)
+
+
+def test_la_region_no_salta_a_un_grupo_desconectado():
+    # Si el modelo dispara en dos esquinas opuestas por motivos distintos, la
+    # caja que englobase ambas seria la imagen entera y se perderia la ventaja
+    # de acotar. Solo se sigue el grupo contiguo al maximo.
+    resultado = _resultado(
+        [(0, 0, 100, 100), (0, 50, 100, 150), (900, 900, 1000, 1000)], [0.9, 0.8, 0.7]
+    )
+    assert resultado.region_activa(0.5) == (0, 0, 100, 150)
+
+
+def test_sin_ninguna_ventana_sobre_el_umbral_devuelve_la_mejor():
+    resultado = _resultado([(0, 0, 100, 100), (0, 50, 100, 150)], [0.3, 0.1])
+    assert resultado.region_activa(0.5) == (0, 0, 100, 100)
+
+
+def test_una_sola_ventana_devuelve_esa_ventana():
+    assert _resultado([(10, 20, 110, 120)], [0.9]).region_activa(0.5) == (10, 20, 110, 120)
+
+
+def test_la_region_esta_dentro_de_la_imagen_en_un_caso_real():
+    imagen = np.zeros((1600, 1200, 3), np.uint8)
+    resultado = predecir_por_mosaicos(PredictorFalso(), imagen, CONFIG)
+    x0, y0, x1, y1 = resultado.region_activa(0.0)
+    assert 0 <= x0 < x1 <= 1200
+    assert 0 <= y0 < y1 <= 1600

@@ -55,10 +55,23 @@ from src.vision.camara import (  # noqa: E402
     recortar_centro,
     rectangulo_centro,
 )
+from src.vision.escala import (  # noqa: E402
+    ReferenciaEscala,
+    anotar_referencia,
+    aviso_por_lejania,
+    detectar_escala,
+)
 from src.vision.inclinacion import (  # noqa: E402
     anotar_imagen,
     clasificar_orientacion_grieta,
     estimar_inclinacion,
+)
+from src.vision.morfologia import (  # noqa: E402
+    MedidasGrieta,
+    anotar_medidas,
+    clasificar_forma,
+    medir_grieta,
+    segmentar_grieta,
 )
 
 ELEMENTOS = {
@@ -392,6 +405,25 @@ def construir_barra_lateral(config: dict[str, Any]) -> dict[str, Any]:
         else:
             estado["lado_mosaico"] = int(obtener(config, "app.mosaicos.lado_px", 480))
 
+        estado["medir"] = st.checkbox(
+            "Medir la fisura",
+            value=bool(obtener(config, "medicion.activo", True)),
+            disabled=not estado["mosaicos"],
+            help=(
+                "Extrae la geometría de la grieta: longitud, ancho, forma y "
+                "ramificación.\n\n"
+                "Necesita el análisis por mosaicos, porque mide sobre la zona que "
+                "el modelo señaló.\n\n"
+                "Con un marcador de escala en la foto las medidas salen en "
+                "milímetros; sin él, en píxeles. Añade entre 0.1 y 0.9 s."
+            ),
+        )
+        if estado["medir"] and estado["mosaicos"]:
+            st.caption(
+                "Para obtener **milímetros** imprime el marcador con "
+                "`python scripts/generar_marcador.py` y fotografíalo junto a la grieta."
+            )
+
         st.divider()
         st.markdown("### 🔧 Sensibilidad de OpenCV")
         st.caption("Cada control altera el resultado de la inclinometria en vivo.")
@@ -583,15 +615,20 @@ def ejecutar_pipeline(
         "Preprocesando",
         "Clasificando grieta",
         "Midiendo inclinacion",
+        "Midiendo la fisura",
         "Aplicando reglas de riesgo",
     ]
-    barra = st.progress(0.0, text=f"1/5 · {etapas[0]}")
+    barra = st.progress(0.0, text=f"1/6 · {etapas[0]}")
     inicio_total = time.perf_counter()
 
     # Etapa 1-2: carga y preprocesado geometrico para el modulo clasico.
     imagen_vision = redimensionar_para_vision(imagen_rgb)
     imagen_bgr = cv2.cvtColor(imagen_vision, cv2.COLOR_RGB2BGR)
-    barra.progress(0.2, text=f"2/5 · {etapas[1]}")
+    # La medicion necesita la imagen SIN redimensionar: el recorte a 1024 px que
+    # usa la inclinometria ya cambiaria la escala y los anchos en pixeles dejarian
+    # de corresponder con los milimetros que calcula el marcador.
+    imagen_bgr_completa = cv2.cvtColor(np.asarray(imagen_rgb), cv2.COLOR_RGB2BGR)
+    barra.progress(0.2, text=f"2/6 · {etapas[1]}")
 
     # Etapa 3: clasificacion.
     #
@@ -607,7 +644,7 @@ def ejecutar_pipeline(
         ms_inferencia = mosaicos.milisegundos
     else:
         probabilidad, ms_inferencia = predictor.predecir_imagen(imagen_rgb, config)
-    barra.progress(0.4, text=f"3/5 · {etapas[2]}")
+    barra.progress(0.4, text=f"3/6 · {etapas[2]}")
 
     # Etapa 4: inclinometria y orientacion de la grieta.
     inclinacion = estimar_inclinacion(
@@ -628,9 +665,28 @@ def ejecutar_pipeline(
     anotada_bgr = anotar_imagen(
         imagen_bgr, inclinacion, dibujar_descartadas=controles["mostrar_descartadas"]
     )
-    barra.progress(0.75, text=f"4/5 · {etapas[3]}")
+    barra.progress(0.7, text=f"4/6 · {etapas[3]}")
 
-    # Etapa 5: motor de reglas.
+    # Etapa 5: geometria de la fisura.
+    #
+    # Se mide sobre la REGION ACTIVA de los mosaicos, no sobre una ventana suelta
+    # ni sobre la imagen entera: la ventana trunca la grieta y la imagen entera
+    # deja que la textura de otras zonas compita con ella (§4.6).
+    medidas = referencia = mascara = puentes = None
+    region = None
+    if (
+        controles.get("medir")
+        and mosaicos is not None
+        and probabilidad >= float(obtener(config, "riesgo.umbral_grieta", 0.5))
+    ):
+        barra.progress(0.8, text=f"5/6 · {etapas[4]}")
+        region = mosaicos.region_activa(float(obtener(config, "riesgo.umbral_grieta", 0.5)))
+        recorte = imagen_bgr_completa[region[1] : region[3], region[0] : region[2]]
+        referencia = detectar_escala(imagen_bgr_completa, config)
+        medidas = medir_grieta(recorte, config, escala_mm_por_px=referencia.mm_por_px)
+        mascara, puentes, _ = segmentar_grieta(recorte, config)
+
+    # Etapa 6: motor de reglas.
     evaluacion = evaluar_riesgo(
         probabilidad_grieta=probabilidad,
         config=config,
@@ -639,7 +695,7 @@ def ejecutar_pipeline(
         angulo_desaplome=inclinacion.angulo_grados,
         confianza_inclinacion=inclinacion.confianza,
     )
-    barra.progress(1.0, text=f"5/5 · {etapas[4]} · completado")
+    barra.progress(1.0, text=f"6/6 · {etapas[5]} · completado")
     barra.empty()
 
     return {
@@ -652,6 +708,11 @@ def ejecutar_pipeline(
         "imagen_vision": imagen_vision,
         "imagen_rgb": imagen_rgb,
         "imagen_anotada": cv2.cvtColor(anotada_bgr, cv2.COLOR_BGR2RGB),
+        "medidas": medidas,
+        "referencia": referencia,
+        "region": region,
+        "mascara": mascara,
+        "puentes": puentes,
         "ms_total": (time.perf_counter() - inicio_total) * 1000.0,
     }
 
@@ -715,6 +776,232 @@ def _panel_mosaicos(imagen_rgb: np.ndarray, mosaicos: ResultadoMosaicos, umbral:
         )
 
     st.write("")
+
+
+def _metricas_de_fisura(
+    medidas: MedidasGrieta, config: dict[str, Any]
+) -> list[tuple[str, str, str, str]]:
+    """Prepara las magnitudes de la fisura en unidades legibles.
+
+    La eleccion de unidad no es cosmetica, es lo que hace la cifra comprensible:
+
+    - El **ancho** va siempre en **milimetros**, porque las fisuras miden entre
+      decimas y unos pocos milimetros, y porque es la magnitud con la que la
+      NSR-10 gradua el dano. Decir "0.85 mm" se entiende; decir "0.085 cm" no.
+    - El **recorrido** va en **centimetros** cuando pasa de diez, porque "46 cm"
+      se visualiza y "460 mm" obliga a dividir mentalmente.
+
+    Es como lo diria un inspector: *una grieta de 46 cm de largo y 0.9 mm de
+    ancho*. Sin referencia de escala se reportan pixeles, que no se entienden
+    igual de bien pero son lo unico que se sabe.
+
+    Args:
+        medidas: Geometria extraida.
+        config: Configuracion del proyecto.
+
+    Returns:
+        Lista de tuplas ``(titulo, valor, unidad, nota)`` listas para mostrar.
+    """
+    inferido = 100.0 * medidas.longitud_inferida_px / max(medidas.longitud_px, 1.0)
+    nota_recorrido = (
+        f"{inferido:.0f} % reconstruido entre fragmentos"
+        if inferido >= 1.0
+        else "Medido de extremo a extremo"
+    )
+    forma = (
+        clasificar_forma(medidas, config).capitalize(),
+        f"Tortuosidad {medidas.tortuosidad:.2f} · ramificación "
+        f"{medidas.indice_ramificacion:.2f}",
+    )
+
+    if medidas.ancho_maximo_mm is None:
+        return [
+            ("Ancho máximo", f"{medidas.ancho_maximo_px:.1f}", "px", "Sin escala conocida"),
+            ("Ancho medio", f"{medidas.ancho_medio_px:.1f}", "px", "A lo largo del recorrido"),
+            ("Recorrido", f"{medidas.longitud_px:.0f}", "px", nota_recorrido),
+            ("Forma", forma[0], "", forma[1]),
+        ]
+
+    # Por debajo de 10 cm el recorrido se lee mejor en milimetros.
+    largo_cm = medidas.longitud_mm / 10.0
+    recorrido = (
+        (f"{largo_cm:.1f}", "cm") if largo_cm >= 10.0 else (f"{medidas.longitud_mm:.0f}", "mm")
+    )
+
+    # Un ancho en milimetros sin su incertidumbre invita a leerlo con una
+    # precision que no tiene. La segmentacion acierta el borde de la fisura con
+    # un margen de un pixel, asi que la incertidumbre en milimetros es
+    # exactamente lo que mide un pixel a esa escala.
+    #
+    # Esto no es un detalle: la MISMA pared medida a 1280x720 y a 640x480 dio
+    # 3.46 mm y 7.97 mm de ancho maximo. No es que una de las dos se equivoque
+    # mas de lo previsto -es que a 640x480 un pixel vale medio milimetro y la
+    # cifra no puede ser mejor que eso. Mostrarlo lo hace evidente.
+    incertidumbre = float(medidas.escala_mm_por_px or 0.0)
+
+    return [
+        (
+            "Ancho máximo",
+            f"{medidas.ancho_maximo_mm:.2f}",
+            "mm",
+            f"± {incertidumbre:.2f} mm · en el punto más abierto",
+        ),
+        (
+            "Ancho medio",
+            f"{medidas.ancho_medio_mm:.2f}",
+            "mm",
+            f"± {incertidumbre:.2f} mm · promedio del recorrido",
+        ),
+        ("Recorrido", recorrido[0], recorrido[1], nota_recorrido),
+        ("Forma", forma[0], "", forma[1]),
+    ]
+
+
+def _aviso_de_resolucion(medidas: MedidasGrieta) -> str | None:
+    """Advierte cuando la escala es demasiado gruesa para el ancho medido.
+
+    El ancho de una fisura se determina con un margen de aproximadamente un
+    pixel. Si ese pixel representa una fraccion apreciable del propio ancho, la
+    cifra en milimetros tiene mas incertidumbre que contenido, por mucho que se
+    escriba con dos decimales.
+
+    Args:
+        medidas: Geometria extraida, ya convertida a milimetros.
+
+    Returns:
+        Texto de advertencia, o ``None`` si la resolucion da para la medida.
+    """
+    if medidas.ancho_medio_mm is None or not medidas.escala_mm_por_px:
+        return None
+
+    proporcion = medidas.escala_mm_por_px / max(medidas.ancho_medio_mm, 1e-6)
+    if proporcion < 0.25:
+        return None
+    return (
+        f"**La foto no tiene resolución para este ancho.** Un píxel vale "
+        f"{medidas.escala_mm_por_px:.2f} mm y la fisura mide "
+        f"{medidas.ancho_medio_mm:.2f} mm de media: el margen de error es del "
+        f"{100 * proporcion:.0f} %. Acércate más o usa una captura de mayor "
+        "resolución; el recorrido y la forma siguen siendo válidos, el ancho no."
+    )
+
+
+def _frase_de_fisura(medidas: MedidasGrieta, config: dict[str, Any]) -> str:
+    """Resume la fisura en una frase como la diria un inspector.
+
+    Args:
+        medidas: Geometria extraida.
+        config: Configuracion del proyecto.
+
+    Returns:
+        Frase descriptiva en lenguaje corriente.
+    """
+    forma = clasificar_forma(medidas, config)
+    if medidas.ancho_maximo_mm is None:
+        return (
+            f"Fisura {forma} de {medidas.longitud_px:.0f} px de recorrido y "
+            f"{medidas.ancho_medio_px:.1f} px de ancho medio. "
+            "**Sin marcador de escala no se pueden dar milímetros.**"
+        )
+    largo_cm = medidas.longitud_mm / 10.0
+    largo = f"{largo_cm:.0f} cm" if largo_cm >= 10.0 else f"{medidas.longitud_mm:.0f} mm"
+    return (
+        f"Fisura {forma} de **{largo}** de recorrido, con un ancho medio de "
+        f"**{medidas.ancho_medio_mm:.2f} mm** y hasta "
+        f"**{medidas.ancho_maximo_mm:.2f} mm** en el punto más abierto."
+    )
+
+
+def _panel_medidas(resultado: dict[str, Any], config: dict[str, Any]) -> None:
+    """Muestra la geometria de la fisura y el estado de la escala.
+
+    Args:
+        resultado: Salida de :func:`ejecutar_pipeline`.
+        config: Configuracion del proyecto.
+    """
+    medidas: MedidasGrieta = resultado["medidas"]
+    referencia: ReferenciaEscala | None = resultado.get("referencia")
+
+    st.markdown("#### Medidas de la fisura")
+
+    if not medidas.detectada:
+        st.info(
+            f"**No se pudo medir la fisura.** {medidas.motivo}\n\n"
+            "El clasificador detectó grieta, pero el módulo de medición no logró "
+            "aislar una estructura fina y alargada. Suele ocurrir con fisuras muy "
+            "tenues o cuando lo detectado es una mancha."
+        )
+        return
+
+    hay_escala = medidas.ancho_maximo_mm is not None
+
+    st.markdown(_frase_de_fisura(medidas, config))
+    columnas = st.columns(4)
+    for columna, (titulo, valor, unidad, nota) in zip(
+        columnas, _metricas_de_fisura(medidas, config), strict=True
+    ):
+        with columna:
+            st.markdown(
+                estilos.tarjeta_metrica(titulo, valor, unidad, nota), unsafe_allow_html=True
+            )
+
+    if medidas.union_rechazada:
+        st.info(f"**Se midió solo el tramo principal.** {medidas.union_rechazada}")
+
+    # --- Estado de la escala ------------------------------------------------
+    if not hay_escala:
+        st.warning(
+            "**Las medidas están en píxeles, no en milímetros.** "
+            + (referencia.motivo if referencia else "No se buscó referencia de escala.")
+            + "\n\nUn píxel puede valer 0.1 mm o 5 mm según a qué distancia se tomó la "
+            "foto, y ese dato no está en la imagen. Para obtener milímetros, imprime el "
+            "marcador con `python scripts/generar_marcador.py` y colócalo junto a la "
+            "grieta al fotografiar."
+        )
+        return
+
+    aviso_resolucion = _aviso_de_resolucion(medidas)
+    if aviso_resolucion:
+        st.warning(aviso_resolucion)
+
+    st.success(f"**Escala obtenida.** {referencia.resumen()}")
+    if referencia.aviso:
+        st.warning(f"**Cuidado con esta escala.** {referencia.aviso}")
+    if resultado.get("region"):
+        lejania = aviso_por_lejania(referencia, resultado["region"], config)
+        if lejania:
+            st.warning(f"**Cuidado con esta escala.** {lejania}")
+
+
+def _vista_fisura(resultado: dict[str, Any]) -> None:
+    """Dibuja la fisura segmentada dentro de su contexto en la fotografia.
+
+    Args:
+        resultado: Salida de :func:`ejecutar_pipeline`.
+    """
+    medidas: MedidasGrieta = resultado["medidas"]
+    region = resultado.get("region")
+    if region is None:
+        return
+
+    completa = cv2.cvtColor(np.asarray(resultado["imagen_rgb"]), cv2.COLOR_RGB2BGR)
+    if resultado.get("referencia") is not None:
+        completa = anotar_referencia(completa, resultado["referencia"])
+
+    x0, y0, x1, y1 = region
+    completa[y0:y1, x0:x1] = anotar_medidas(
+        completa[y0:y1, x0:x1], medidas, resultado.get("mascara"), resultado.get("puentes")
+    )
+    cv2.rectangle(completa, (x0, y0), (x1, y1), (40, 170, 250), 4)
+
+    st.image(cv2.cvtColor(completa, cv2.COLOR_BGR2RGB), use_column_width=True)
+    st.caption(
+        "**Naranja translúcido**: la fisura aislada. **Rojo**: su eje central. "
+        "**Amarillo**: tramos reconstruidos entre fragmentos, donde no se observó "
+        "fisura sino que se dedujo que continuaba. **Verde**: extremos. "
+        "El recuadro naranja delimita la zona que el clasificador señaló, y es donde "
+        "se midió."
+    )
 
 
 def pestana_analisis(
@@ -827,17 +1114,32 @@ def pestana_analisis(
     if mosaicos is not None:
         _panel_mosaicos(resultado["imagen_rgb"], mosaicos, umbral)
 
-    # --- Comparacion lado a lado -------------------------------------------
-    st.markdown("#### Comparacion visual")
-    izquierda, derecha = st.columns(2, gap="medium")
-    with izquierda:
-        st.markdown("**Original**")
+    # --- Medidas de la fisura ----------------------------------------------
+    if resultado.get("medidas") is not None:
+        _panel_medidas(resultado, config)
+
+    # --- Las vistas, en pestanas -------------------------------------------
+    #
+    # Apiladas una debajo de otra obligaban a recorrer la pagina entera para
+    # compararlas, y con la medicion son cuatro. En pestanas ocupan el mismo
+    # sitio y se alternan sin perder el punto de vista.
+    st.markdown("#### Vistas de la imagen")
+    nombres = ["Original", "Canny + Hough"]
+    if resultado.get("medidas") is not None and resultado["medidas"].detectada:
+        nombres.insert(1, "Fisura medida")
+    vistas = st.tabs(nombres)
+
+    with vistas[nombres.index("Original")]:
         # use_column_width (no use_container_width): es el parametro que expone
-        # st.image en Streamlit 1.39. Ambas columnas tienen el mismo ancho, asi
-        # que las dos imagenes quedan a la misma escala para compararlas.
+        # st.image en Streamlit 1.39.
         st.image(resultado["imagen_vision"], use_column_width=True)
-    with derecha:
-        st.markdown("**Procesada · Canny + Hough**")
+        st.caption("La fotografía tal como se cargó, reducida solo para mostrarla.")
+
+    if "Fisura medida" in nombres:
+        with vistas[nombres.index("Fisura medida")]:
+            _vista_fisura(resultado)
+
+    with vistas[nombres.index("Canny + Hough")]:
         st.image(resultado["imagen_anotada"], use_column_width=True)
         # El desglose refleja exactamente lo que dibuja anotar_imagen():
         #   verde = lineas coherentes (== confianza), las que sustentan el angulo
@@ -1729,50 +2031,430 @@ def pestana_camara(
     _modo_video(config, controles, predictor_video, cfg)
 
 
-def _modo_foto(config: dict[str, Any], controles: dict[str, Any], predictor: Predictor) -> None:
-    """Modo de instantanea con la camara del navegador.
+def _foto_desde_celular(config: dict[str, Any], controles: dict[str, Any]) -> Any | None:
+    """Toma una sola instantanea del stream que publica el telefono.
 
-    Es la red de seguridad para la sustentacion: no depende de que OpenCV pueda
-    abrir el dispositivo, solo de que el navegador tenga permiso de camara.
+    Args:
+        config: Configuracion del proyecto.
+        controles: Estado de los controles, para aplicar giro y espejo.
+
+    Returns:
+        Fotograma BGR ya orientado, o ``None`` si aun no hay captura.
+    """
+    guardada = st.session_state.get("url_celular", "")
+    texto = st.text_input(
+        "Dirección del stream del celular",
+        value=guardada or str(obtener(config, "app.camara.url_celular", "")),
+        placeholder="192.168.1.40:8080",
+        help="La misma que usa el modo de vídeo. Se admite la forma abreviada.",
+        key="url_celular_foto",
+    )
+    url = normalizar_url_celular(texto)
+    if not url:
+        st.info("Escribe la dirección que muestra la app de cámara del celular.")
+        return None
+
+    st.session_state.url_celular = texto
+    st.caption(f"Se conectará a `{url}`")
+
+    controles = {
+        **controles,
+        "rotacion": st.select_slider(
+            "Girar la imagen",
+            options=[0, 90, 180, 270],
+            value=int(obtener(config, "app.camara.rotacion", 0)),
+            format_func=lambda g: f"{g}°",
+            help="Muchas apps de cámara IP entregan el vídeo tumbado.",
+            key="rotacion_foto_celular",
+        ),
+    }
+
+    if not st.button("📸 Tomar la foto", use_container_width=True):
+        return None
+
+    cfg_camara = obtener(config, "app.camara", {}) or {}
+    with st.spinner("Conectando con el celular..."):
+        captura = obtener_captura(
+            url, int(cfg_camara.get("ancho", 640)), int(cfg_camara.get("alto", 480))
+        )
+        if not captura.isOpened():
+            liberar_camara()
+            st.error(
+                f"No se pudo conectar con `{url}`. Comprueba que la app del celular sigue "
+                "emitiendo y que ambos están en la misma red Wi-Fi."
+            )
+            return None
+
+        # El lector asincrono no tiene ningun fotograma en el instante de abrir:
+        # su hilo acaba de arrancar y el primero de un stream de red tarda unas
+        # decimas en llegar. Leer una sola vez fallaria casi siempre.
+        fotograma = None
+        limite = time.perf_counter() + 5.0
+        while time.perf_counter() < limite:
+            leido, candidato, _ = captura.leer()
+            if leido and candidato is not None:
+                fotograma = candidato
+                break
+            time.sleep(0.1)
+
+    # La conexion se cierra tras la captura: el modo foto es de un disparo, y
+    # dejar el stream abierto lo mantendria ocupado para el modo de video.
+    liberar_camara()
+
+    if fotograma is None:
+        st.error(
+            "Se conectó pero no llegó ningún fotograma en 5 segundos. Comprueba que la "
+            "app del celular sigue emitiendo y vuelve a intentarlo."
+        )
+        return None
+    return orientar_fotograma(fotograma, controles)
+
+
+def _modo_foto(config: dict[str, Any], controles: dict[str, Any], predictor: Predictor) -> None:
+    """Modo de instantanea: una sola foto analizada a fondo.
+
+    Por que hay tres origenes y no uno
+    ----------------------------------
+    El obvio -``st.camera_input``, la camara del navegador- **no funciona desde
+    el celular**, y conviene entender por que antes de buscarle la vuelta: los
+    navegadores solo dan acceso a la camara en contexto seguro, es decir por
+    HTTPS o en localhost. Abrir la aplicacion desde el telefono en
+    ``http://192.168.x.x:8501`` no lo es, asi que el permiso se deniega siempre.
+
+    De ahi los otros dos, que si funcionan por red sin certificados:
+
+    - **Subir una foto**: en un telefono, el selector de archivos ofrece "Hacer
+      foto" y abre la camara nativa del sistema. No interviene el navegador, asi
+      que no hay restriccion de contexto seguro, y ademas la imagen llega a
+      resolucion completa, que es justo lo que la medicion necesita.
+    - **Capturar del stream**: un fotograma del mismo video que usa el modo en
+      vivo. Comodo cuando el telefono ya esta montado apuntando a la pared.
 
     Args:
         config: Configuracion del proyecto.
         controles: Estado de los controles de la barra lateral.
         predictor: Predictor activo.
     """
-    captura = st.camera_input("Toma una foto del elemento")
-    if captura is None:
+    origen = st.radio(
+        "De dónde sale la foto",
+        ["subir", "dispositivo", "stream"],
+        horizontal=True,
+        format_func=lambda v: {
+            "subir": "📱 Subir foto (recomendado desde el celular)",
+            "dispositivo": "💻 Cámara de este dispositivo",
+            "stream": "📡 Capturar del stream del celular",
+        }[v],
+    )
+
+    imagen_rgb = None
+    max_mb = int(obtener(config, "app.max_mb_subida", 10))
+
+    if origen == "subir":
         st.caption(
-            "El navegador pedirá permiso para usar la cámara. La imagen se procesa "
-            "en local y no se envía a ningún servidor externo."
+            "Desde el celular, el selector de archivos ofrece **Hacer foto** y abre la "
+            "cámara del sistema. Es la vía con mejor resolución, y la única que funciona "
+            "desde el teléfono sin certificados HTTPS."
         )
-        return
+        archivo = st.file_uploader(
+            "Foto del elemento",
+            type=["jpg", "jpeg", "png", "bmp", "tif", "tiff"],
+            key="foto_subida_camara",
+        )
+        if archivo is not None:
+            imagen_rgb, error = leer_imagen_subida(archivo, max_mb)
+            if imagen_rgb is None:
+                st.error(f"No se pudo procesar la foto. {error}")
+                return
 
-    imagen_rgb, error = leer_imagen_subida(captura, int(obtener(config, "app.max_mb_subida", 10)))
+    elif origen == "dispositivo":
+        st.caption(
+            "Usa la cámara del aparato donde está **abierta esta página**. En el "
+            "computador funciona; **desde el celular no**, porque los navegadores solo "
+            "permiten la cámara por HTTPS y la app se sirve por HTTP en la red local. "
+            "Si estás en el teléfono, usa *Subir foto*."
+        )
+        captura = st.camera_input("Toma una foto del elemento")
+        if captura is not None:
+            imagen_rgb, error = leer_imagen_subida(captura, max_mb)
+            if imagen_rgb is None:
+                st.error(f"No se pudo procesar la captura. {error}")
+                return
+
+    else:
+        fotograma = _foto_desde_celular(config, controles)
+        if fotograma is not None:
+            imagen_rgb = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
+
     if imagen_rgb is None:
-        st.error(f"No se pudo procesar la captura. {error}")
         return
 
-    with st.spinner("Analizando..."):
+    with st.spinner("Analizando la fotografía..."):
         resultado = ejecutar_pipeline(imagen_rgb, predictor, config, controles)
 
-    st.markdown(
-        estilos.semaforo(resultado["evaluacion"].nivel, resultado["evaluacion"].resumen),
-        unsafe_allow_html=True,
-    )
-    izquierda, derecha = st.columns(2, gap="medium")
-    with izquierda:
+    evaluacion = resultado["evaluacion"]
+    st.markdown(estilos.semaforo(evaluacion.nivel, evaluacion.resumen), unsafe_allow_html=True)
+    st.write("")
+
+    if resultado.get("medidas") is not None:
+        _panel_medidas(resultado, config)
+
+    nombres = ["Original", "Canny + Hough"]
+    if resultado.get("medidas") is not None and resultado["medidas"].detectada:
+        nombres.insert(1, "Fisura medida")
+    vistas = st.tabs(nombres)
+    with vistas[nombres.index("Original")]:
         st.image(resultado["imagen_vision"], use_column_width=True)
-    with derecha:
+    if "Fisura medida" in nombres:
+        with vistas[nombres.index("Fisura medida")]:
+            _vista_fisura(resultado)
+    with vistas[nombres.index("Canny + Hough")]:
         st.image(resultado["imagen_anotada"], use_column_width=True)
 
-    for regla in sorted(resultado["evaluacion"].reglas, key=lambda r: -r.severidad):
+    st.markdown("#### Reglas que determinaron el nivel de riesgo")
+    for regla in sorted(evaluacion.reglas, key=lambda r: -r.severidad):
         st.markdown(
             estilos.regla(
                 regla.codigo, regla.titulo, regla.detalle, regla.justificacion, regla.severidad
             ),
             unsafe_allow_html=True,
         )
+
+
+def orientar_fotograma(fotograma: np.ndarray, controles: dict[str, Any]) -> np.ndarray:
+    """Aplica el giro y el espejo elegidos por el usuario.
+
+    Por que es un control y no una constante
+    ----------------------------------------
+    La aplicacion volteaba siempre el fotograma en horizontal, pensando en una
+    webcam que apunta al usuario: ahi el espejo es lo natural, porque mover la
+    mano a la derecha debe moverla a la derecha en pantalla.
+
+    Apuntando a una pared con la camara trasera del telefono ese espejo es
+    **sencillamente incorrecto**, y ademas rompe algo que no se ve: un marcador
+    ArUco reflejado **no se puede leer**. Su patron interno deja de existir en el
+    diccionario. Comprobado: con espejo la deteccion falla siempre, mientras que
+    los giros de 90 y 180 grados no le afectan, porque el formato esta disenado
+    para ser invariante a la rotacion.
+
+    Por eso el espejo viene desactivado por defecto -el caso documentado es
+    apuntar a una pared- y los giros se ofrecen aparte, que es lo que suele hacer
+    falta cuando una app de camara IP entrega el video tumbado.
+
+    Args:
+        fotograma: Fotograma tal como llega de la camara.
+        controles: Estado de los controles del modo video.
+
+    Returns:
+        El fotograma orientado.
+    """
+    giros = {
+        90: cv2.ROTATE_90_CLOCKWISE,
+        180: cv2.ROTATE_180,
+        270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+    }
+    grados = int(controles.get("rotacion", 0))
+    salida = cv2.rotate(fotograma, giros[grados]) if grados in giros else fotograma
+    if controles.get("espejo"):
+        salida = cv2.flip(salida, 1)
+    return salida
+
+
+def _capturar_y_medir(
+    captura: Any,
+    config: dict[str, Any],
+    controles: dict[str, Any],
+    predictor: Predictor,
+    fraccion: float,
+) -> dict[str, Any]:
+    """Congela un fotograma y extrae la geometria de la fisura.
+
+    Por que se mide sobre una captura y no en vivo
+    ----------------------------------------------
+    A la resolucion del video una fisura ocupa uno o dos pixeles, y una medida
+    calculada sobre eso cambiaria de valor en cada fotograma sin que la pared se
+    moviera. Un numero que baila invita a quedarse con el que mas convenga.
+
+    El reparto de tareas es el natural: **el video sirve para encontrar la
+    grieta; la medida se toma quieta**, sobre el fotograma completo y a la
+    resolucion que entrega la camara, no sobre el recorte reducido que usa el
+    clasificador en vivo.
+
+    Args:
+        captura: Lector de video activo.
+        config: Configuracion del proyecto.
+        controles: Estado de los controles de la barra lateral.
+        predictor: Predictor activo.
+        fraccion: Fraccion central que se analiza cuando el fotograma es pequeno.
+
+    Returns:
+        Diccionario con el fotograma, las medidas, la referencia de escala y la
+        region analizada. Si no se pudo capturar, ``{"error": ...}``.
+    """
+    leido, fotograma, _ = captura.leer()
+    if not leido or fotograma is None:
+        return {"error": "No se pudo capturar el fotograma. Comprueba que la cámara sigue activa."}
+
+    # La misma orientacion que muestra el video en vivo, para que lo medido sea
+    # exactamente lo que se estaba viendo.
+    fotograma = orientar_fotograma(fotograma, controles)
+    alto, ancho = fotograma.shape[:2]
+    rgb = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
+
+    # Si el fotograma da para trocearlo, se usa la zona que senala el
+    # clasificador; si no -una webcam de 640x480-, el recorte central, que es lo
+    # que el modo en vivo estaba analizando de todas formas.
+    mosaicos = None
+    if _conviene_trocear(rgb, config):
+        mosaicos = predecir_por_mosaicos(predictor, rgb, config, lado=controles.get("lado_mosaico"))
+        probabilidad = mosaicos.probabilidad
+        region = mosaicos.region_activa(float(obtener(config, "riesgo.umbral_grieta", 0.5)))
+    else:
+        region = rectangulo_centro(fotograma, fraccion)
+        recorte_rgb = rgb[region[1] : region[3], region[0] : region[2]]
+        probabilidad, _ = predictor.predecir_imagen(recorte_rgb, config)
+
+    referencia = detectar_escala(fotograma, config)
+    recorte = fotograma[region[1] : region[3], region[0] : region[2]]
+    medidas = medir_grieta(recorte, config, escala_mm_por_px=referencia.mm_por_px)
+    mascara, puentes, _ = segmentar_grieta(recorte, config)
+
+    # El veredicto de riesgo tambien, y sobre ESTE fotograma: una medida sin su
+    # consecuencia obliga a mirar el video de al lado para saber que significa, y
+    # ese video ya muestra otro encuadre. La captura debe bastarse sola, porque
+    # es lo que se guarda para el informe.
+    inclinacion = estimar_inclinacion(
+        fotograma,
+        config,
+        canny_bajo=controles["canny_bajo"],
+        canny_alto=controles["canny_alto"],
+        min_longitud=controles["min_longitud"],
+        max_separacion=controles["max_separacion"],
+        umbral_hough=controles["umbral_hough"],
+    )
+    orientacion = (
+        clasificar_orientacion_grieta(
+            recorte,
+            config,
+            canny_bajo=controles["canny_bajo"],
+            canny_alto=controles["canny_alto"],
+        ).orientacion
+        if probabilidad >= float(obtener(config, "riesgo.umbral_grieta", 0.5))
+        else "ninguna"
+    )
+    evaluacion = evaluar_riesgo(
+        probabilidad_grieta=float(probabilidad),
+        config=config,
+        elemento=controles["elemento"],
+        orientacion_grieta=orientacion,
+        angulo_desaplome=inclinacion.angulo_grados if inclinacion.fiable else None,
+        confianza_inclinacion=inclinacion.confianza if inclinacion.fiable else 0,
+    )
+
+    return {
+        "fotograma": fotograma,
+        "evaluacion": evaluacion,
+        "inclinacion": inclinacion,
+        "orientacion": orientacion,
+        "probabilidad": float(probabilidad),
+        "region": region,
+        "medidas": medidas,
+        "referencia": referencia,
+        "mascara": mascara,
+        "puentes": puentes,
+        "resolucion": (ancho, alto),
+        "troceado": mosaicos is not None,
+    }
+
+
+def _panel_medida_congelada(config: dict[str, Any]) -> None:
+    """Muestra la medida tomada sobre el fotograma congelado.
+
+    Args:
+        config: Configuracion del proyecto.
+    """
+    datos = st.session_state.get("medida_congelada") or {}
+
+    if datos.get("error"):
+        st.error(datos["error"])
+        if st.button("↩ Volver al vídeo", use_container_width=True):
+            st.session_state.pop("medida_congelada", None)
+            st.rerun()
+        return
+
+    medidas: MedidasGrieta = datos["medidas"]
+    referencia: ReferenciaEscala = datos["referencia"]
+    ancho, alto = datos["resolucion"]
+
+    st.markdown("### 📏 Medida tomada")
+    st.caption(
+        f"Fotograma congelado de {ancho}×{alto} px · "
+        + ("zona señalada por el modelo" if datos["troceado"] else "recorte central")
+        + f" · probabilidad de grieta {datos['probabilidad']:.0%}"
+    )
+
+    if st.button("↩ Volver al vídeo", use_container_width=True):
+        st.session_state.pop("medida_congelada", None)
+        st.rerun()
+
+    evaluacion = datos.get("evaluacion")
+    if evaluacion is not None:
+        st.markdown(estilos.semaforo(evaluacion.nivel, evaluacion.resumen), unsafe_allow_html=True)
+        st.write("")
+
+    izquierda, derecha = st.columns([3, 2], gap="medium")
+
+    with izquierda:
+        lienzo = datos["fotograma"].copy()
+        lienzo = anotar_referencia(lienzo, referencia)
+        x0, y0, x1, y1 = datos["region"]
+        lienzo[y0:y1, x0:x1] = anotar_medidas(
+            lienzo[y0:y1, x0:x1], medidas, datos["mascara"], datos["puentes"]
+        )
+        cv2.rectangle(lienzo, (x0, y0), (x1, y1), (40, 170, 250), 3)
+        st.image(cv2.cvtColor(lienzo, cv2.COLOR_BGR2RGB), use_column_width=True)
+
+    with derecha:
+        if not medidas.detectada:
+            st.info(f"**No se pudo medir.** {medidas.motivo}")
+            return
+
+        st.markdown(_frase_de_fisura(medidas, config))
+        if medidas.union_rechazada:
+            st.info(f"**Solo el tramo principal.** {medidas.union_rechazada}")
+        st.write("")
+        for titulo, valor, unidad, nota in _metricas_de_fisura(medidas, config):
+            st.markdown(
+                estilos.tarjeta_metrica(titulo, valor, unidad, nota), unsafe_allow_html=True
+            )
+            st.write("")
+
+        if medidas.ancho_maximo_mm is None:
+            st.warning(
+                "**Sin marcador en el encuadre, no hay milímetros.** "
+                "Un píxel puede valer 0.1 mm o 5 mm según a qué distancia esté la "
+                "pared, y eso no se puede deducir de la imagen. Coloca el marcador "
+                "impreso junto a la grieta y vuelve a medir."
+            )
+        else:
+            aviso_resolucion = _aviso_de_resolucion(medidas)
+            if aviso_resolucion:
+                st.warning(aviso_resolucion)
+            st.success(f"**Escala.** {referencia.resumen()}")
+            if referencia.aviso:
+                st.warning(referencia.aviso)
+            lejania = aviso_por_lejania(referencia, datos["region"], config)
+            if lejania:
+                st.warning(lejania)
+
+    if evaluacion is not None and evaluacion.reglas:
+        st.markdown("#### Reglas que determinaron el nivel")
+        for regla in sorted(evaluacion.reglas, key=lambda r: -r.severidad):
+            st.markdown(
+                estilos.regla(
+                    regla.codigo, regla.titulo, regla.detalle, regla.justificacion, regla.severidad
+                ),
+                unsafe_allow_html=True,
+            )
 
 
 def _modo_video(
@@ -1920,6 +2602,33 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
         )
 
     with st.expander("⚙ Ajustes de análisis"):
+        giro, espejo = st.columns(2)
+        with giro:
+            controles["rotacion"] = st.select_slider(
+                "Girar la imagen",
+                options=[0, 90, 180, 270],
+                value=int(cfg.get("rotacion", 0)),
+                format_func=lambda g: f"{g}°",
+                help=(
+                    "Muchas apps de cámara IP entregan el vídeo tumbado o boca abajo. "
+                    "Los giros no afectan a la lectura del marcador de escala."
+                ),
+            )
+        with espejo:
+            controles["espejo"] = st.checkbox(
+                "Efecto espejo",
+                value=bool(cfg.get("espejo", False)),
+                help=(
+                    "Útil solo con una webcam que te apunte a ti. Apuntando a una "
+                    "pared sobra.\n\n"
+                    "**Con el espejo activado no se puede medir en milímetros**: un "
+                    "marcador reflejado no se reconoce, porque su patrón invertido no "
+                    "existe en el diccionario."
+                ),
+            )
+        if controles["espejo"]:
+            st.caption("🪞 Con espejo, las medidas saldrán en píxeles.")
+
         fraccion = st.slider(
             "Zona analizada",
             0.2,
@@ -1944,16 +2653,33 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
         )
 
     activa = bool(st.session_state.get("camara_activa", False))
-    boton_izq, boton_der = st.columns(2)
+    boton_izq, boton_medio, boton_der = st.columns(3)
     with boton_izq:
         if st.button("▶ Iniciar", use_container_width=True, disabled=activa):
             st.session_state.camara_activa = True
             st.rerun()
+    with boton_medio:
+        # Congelar y medir, en vez de medir en cada fotograma. A la resolucion
+        # del video una fisura ocupa uno o dos pixeles, y un ancho calculado
+        # sobre eso bailaria entre valores distintos en cada fotograma sin que la
+        # pared cambiase. El video sirve para ENCONTRAR la grieta; la medida se
+        # toma sobre una captura quieta y a resolucion completa.
+        if st.button("📏 Medir", use_container_width=True, disabled=not activa):
+            st.session_state.medir_ahora = True
+            st.rerun()
     with boton_der:
         if st.button("⏹ Detener", use_container_width=True, disabled=not activa):
             st.session_state.camara_activa = False
+            st.session_state.pop("medida_congelada", None)
             liberar_camara()
             st.rerun()
+
+    # Una medida tomada se queda en pantalla hasta que se descarta: el bucle de
+    # video la borraria en el siguiente fotograma, y entonces no habria forma de
+    # leerla ni de fotografiarla para el informe.
+    if st.session_state.get("medida_congelada") is not None:
+        _panel_medida_congelada(config)
+        return
 
     # Video y veredicto lado a lado, no apilados. Apilados obligaban a hacer
     # scroll para pasar de "que estoy enfocando" a "que riesgo tiene", que son
@@ -1966,6 +2692,7 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
         marcador_avisos = st.empty()
     with columna_datos:
         marcador_semaforo = st.empty()
+        marcador_escala = st.empty()
         marcador_tarjetas = st.empty()
 
     if not activa:
@@ -1989,6 +2716,16 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
         return
 
     st.session_state.lector_activo = captura
+
+    # La captura para medir se hace ANTES de entrar al bucle: dentro, cualquier
+    # interaccion reinicia el script de Streamlit y se perderia el fotograma.
+    if st.session_state.pop("medir_ahora", False):
+        with st.spinner("Midiendo la fisura sobre el fotograma capturado..."):
+            st.session_state.medida_congelada = _capturar_y_medir(
+                captura, config, controles, predictor, fraccion
+            )
+        st.rerun()
+
     suave_prob, suave_angulo = _suavizadores(ventana)
     medidor = st.session_state.setdefault("medidor_fps", MedidorFPS())
     umbral = float(obtener(config, "riesgo.umbral_grieta", 0.5))
@@ -2032,8 +2769,10 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
         if not leido or fotograma is None:
             break
 
-        # Espejo: mover la camara a la derecha debe mover la imagen a la derecha.
-        fotograma = cv2.flip(fotograma, 1)
+        # El giro y el espejo los decide el usuario. Ver orientar_fotograma():
+        # el espejo rompe la lectura del marcador de escala, asi que viene
+        # desactivado y se avisa cuando se enciende.
+        fotograma = orientar_fotograma(fotograma, controles)
         resultado = procesar_fotograma(fotograma, predictor, config, controles, fraccion)
 
         prob = suave_prob.agregar(resultado["probabilidad"])
@@ -2083,6 +2822,35 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
         if ahora - ultimo_texto < intervalo_texto:
             continue
         ultimo_texto = ahora
+
+        # Estado de la escala, en vivo. Cuesta un par de milisegundos y evita el
+        # peor recorrido posible: apuntar, pulsar Medir y descubrir solo entonces
+        # que no habia marcador en el encuadre y la medida sale en pixeles.
+        if controles.get("espejo"):
+            marcador_escala.warning(
+                "🪞 Con el espejo activado **no se puede leer el marcador**: su patrón "
+                "reflejado no existe. Desactívalo para medir en milímetros."
+            )
+            referencia_vivo = None
+        else:
+            referencia_vivo = detectar_escala(fotograma, config)
+
+        if referencia_vivo is None:
+            pass
+        elif referencia_vivo.detectada and referencia_vivo.fiable:
+            marcador_escala.success(
+                f"📏 Escala lista · 1 px = {referencia_vivo.mm_por_px:.3f} mm. "
+                "**Medir** dará milímetros."
+            )
+        elif referencia_vivo.detectada:
+            marcador_escala.warning(
+                f"📐 Marcador visible pero torcido ({referencia_vivo.deformacion:.0%}). "
+                "Ponte de frente a la pared."
+            )
+        else:
+            marcador_escala.info(
+                "📷 Sin marcador en el encuadre: **Medir** dará píxeles, no milímetros."
+            )
 
         marcador_tarjetas.markdown(
             _tarjetas_vivo(

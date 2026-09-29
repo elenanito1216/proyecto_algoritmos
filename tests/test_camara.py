@@ -314,3 +314,67 @@ def test_las_cuatro_tarjetas_estan_presentes_en_ambas_disposiciones():
         )
         for titulo in ("P(grieta) suavizada", "Desaplome", "Fotogramas", "Inferencia"):
             assert titulo in html, f"falta '{titulo}' con {columnas} columnas"
+
+
+# ---------------------------------------------------------------------------
+# Orientacion del fotograma
+#
+# La aplicacion volteaba siempre el fotograma en horizontal, pensando en una
+# webcam que apunta al usuario. Apuntando a una pared eso es incorrecto, y
+# ademas rompe algo invisible: un marcador ArUco reflejado no se puede leer, de
+# modo que el indicador de escala en vivo nunca se encendia.
+# ---------------------------------------------------------------------------
+
+
+def test_sin_opciones_el_fotograma_no_se_toca():
+    app = _cargar_app()
+    original = np.arange(24, dtype=np.uint8).reshape(2, 4, 3)
+    np.testing.assert_array_equal(app.orientar_fotograma(original, {}), original)
+
+
+def test_el_espejo_invierte_la_horizontal():
+    app = _cargar_app()
+    original = np.arange(24, dtype=np.uint8).reshape(2, 4, 3)
+    salida = app.orientar_fotograma(original, {"espejo": True})
+    np.testing.assert_array_equal(salida, original[:, ::-1])
+
+
+def test_el_giro_de_90_intercambia_los_lados():
+    app = _cargar_app()
+    original = np.zeros((10, 20, 3), np.uint8)
+    assert app.orientar_fotograma(original, {"rotacion": 90}).shape[:2] == (20, 10)
+
+
+def test_el_giro_de_180_conserva_la_forma():
+    app = _cargar_app()
+    original = np.zeros((10, 20, 3), np.uint8)
+    assert app.orientar_fotograma(original, {"rotacion": 180}).shape[:2] == (10, 20)
+
+
+def test_un_giro_no_contemplado_se_ignora_sin_fallar():
+    app = _cargar_app()
+    original = np.zeros((10, 20, 3), np.uint8)
+    np.testing.assert_array_equal(app.orientar_fotograma(original, {"rotacion": 45}), original)
+
+
+def test_los_giros_no_impiden_leer_el_marcador_pero_el_espejo_si():
+    # Es la razon por la que el espejo viene desactivado: el formato ArUco es
+    # invariante a la rotacion por diseno, pero su patron reflejado no existe en
+    # el diccionario.
+    cv2 = pytest.importorskip("cv2")
+    from src.vision.escala import detectar_escala
+
+    app = _cargar_app()
+    config = {"escala": {"diccionario": "DICT_4X4_50", "lado_marcador_mm": 50.0}}
+    dicc = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+    escena = np.full((600, 600, 3), 180, np.uint8)
+    escena[150:370, 150:370] = cv2.cvtColor(
+        cv2.aruco.generateImageMarker(dicc, 0, 220), cv2.COLOR_GRAY2BGR
+    )
+
+    for grados in (0, 90, 180, 270):
+        girada = app.orientar_fotograma(escena, {"rotacion": grados})
+        assert detectar_escala(girada, config).detectada, f"el giro de {grados}° lo impidio"
+
+    reflejada = app.orientar_fotograma(escena, {"espejo": True})
+    assert not detectar_escala(reflejada, config).detectada

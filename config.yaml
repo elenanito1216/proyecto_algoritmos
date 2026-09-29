@@ -279,6 +279,204 @@ orientacion_grieta:
   umbral_vertical: 65.0       # |angulo| > 65  -> vertical ; resto -> diagonal
 
 # -----------------------------------------------------------------------------
+# MEDICION DE LA GRIETA
+#
+# Caracteriza la geometria de la fisura sobre el recorte donde el clasificador
+# la detecto: longitud, ancho, forma y ramificaciones.
+#
+# ADVERTENCIA QUE GOBIERNA TODO ESTE BLOQUE: las medidas salen en PIXELES, no en
+# milimetros. Sin una referencia de tamano conocido en la escena, una fisura de
+# 3 px puede tener 0.1 mm o 5 mm segun la distancia a la que se tomo la foto: la
+# informacion no esta en la imagen. Reportar milimetros sin referencia seria
+# inventar la cifra mas importante del dictamen (ver reports/analisis.md §5.1).
+# -----------------------------------------------------------------------------
+medicion:
+  activo: true
+
+  # --- Realce de contraste local (CLAHE) ---
+  # Una pared rara vez esta iluminada de forma uniforme. Sin ecualizar por
+  # regiones, un umbral que funciona en la zona al sol falla en la sombra.
+  clahe_clip: 2.0
+  clahe_rejilla: 8
+
+  # --- Nucleo del black-hat: el parametro critico ---
+  # El black-hat deja solo las estructuras OSCURAS Y ESTRECHAS sobre fondo claro,
+  # que es la definicion de una grieta. El nucleo debe ser MAYOR que el ancho
+  # esperado de la fisura: por debajo, la grieta se borra a si misma; muy por
+  # encima, empiezan a colarse sombras y juntas.
+  # RANGO UTIL MEDIDO con este valor: fisuras de 3 a 11 px de ancho. A 13 px el
+  # metodo deja de detectarlas por completo, porque el nucleo ya no es lo
+  # bastante mayor que la fisura. Para grietas mas anchas hay que subirlo.
+  kernel_blackhat: 15
+
+  # --- Correccion del sesgo de ancho ---
+  # La mascara sale sistematicamente mas ancha que la fisura: el cierre
+  # morfologico anade un pixel por lado y el umbral incluye la transicion del
+  # borde. Medido sobre lineas sinteticas de ancho conocido, el sesgo es una
+  # CONSTANTE y no un porcentaje:
+  #     ancho real    3     5     7     9    11
+  #     medido        6.00  8.00 10.00 12.00 14.00
+  #     sesgo        +3.00 +3.00 +3.00 +3.00 +3.00
+  # Sin corregir, una fisura de 3 px se reporta con el doble de su ancho, justo
+  # en el tamano donde se decide si es capilar o es grieta.
+  #
+  # ATENCION: este valor depende de kernel_limpieza. Si se cambia, hay que volver
+  # a medir el sesgo con tests/test_morfologia.py.
+  sesgo_ancho_px: 3.0
+
+  # --- Limpieza morfologica ---
+  kernel_limpieza: 3
+
+  # --- Poda de espolones del eje ---
+  # El borde de una grieta segmentada es rugoso, y cada entrante genera una pua
+  # de dos o tres pixeles que sale del eje central. Geometricamente son
+  # bifurcaciones y el algoritmo las contaba como tales: sobre una foto real del
+  # equipo, una grieta unica y bien trazada se reportaba con 432 "ramificaciones"
+  # y un recorrido inflado por la suma de todas las puas. Por debajo de este
+  # umbral, un tramo terminal se considera pua y se elimina.
+  poda_espolones_px: 12
+
+  # --- Union de fragmentos ---
+  # Una fisura real no se segmenta de una pieza: donde se afina o la luz la
+  # disimula, el umbral la pierde y el trazo queda partido. En una foto del
+  # equipo, una grieta que recorria los 1600 px de la imagen aparecio rota en
+  # cuatro fragmentos, y medir solo el mayor daba 969 px: menos de la mitad.
+  #
+  # Los huecos medidos entre trozos contiguos eran de 6 a 15 px. La union es
+  # transitiva, asi que una cadena de saltos cortos recompone la grieta entera
+  # sin necesidad de permitir un salto largo, que uniria cosas sin relacion.
+  #
+  # La dilatacion decide QUE se une; la mascara que se mide sigue siendo la
+  # original, o los anchos saldrian inflados y la calibracion de sesgo_ancho_px
+  # dejaria de valer.
+  radio_puente_px: 20
+
+  # --- Guardarrailes de verosimilitud ---
+  # Unir fragmentos recompone una grieta partida por el umbral, pero sobre panete
+  # rugoso puede encadenar decenas de trozos de textura en una figura que no
+  # describe ninguna fisura. El resultado sigue teniendo aspecto de numero.
+  #
+  # Las propias medidas lo delatan: una grieta serpentea, pero no recorre siete
+  # veces la distancia entre sus extremos; se ramifica, pero no se multiplica por
+  # veinte. Superados estos limites se descarta la union y se mide solo el trozo
+  # dominante, avisando de que el recorrido puede quedarse corto.
+  #
+  # Es el mismo criterio que los guardarrailes de inclinometria de §4.5.
+  verosimilitud:
+    tortuosidad_maxima: 3.0
+    ramificacion_maxima: 6.0
+
+  # --- Filtros de lo que puede ser una grieta ---
+  # Area minima, como fraccion del recorte y como suelo absoluto en pixeles.
+  area_minima_relativa: 0.0005
+  area_minima_absoluta: 30
+  # Una grieta es larga y estrecha. Un componente tan ancho como largo es una
+  # mancha, una sombra o un desconchado. 2.5 descarta lo compacto sin exigir que
+  # la fisura sea perfectamente recta.
+  #
+  # Se mide sobre la caja MINIMA ROTADA, no sobre la alineada con los ejes: una
+  # grieta diagonal tiene la caja alineada casi cuadrada, y filtrar sobre ella
+  # descartaria justamente las fisuras diagonales, que §4.4 identifica como las
+  # estructuralmente significativas en columnas.
+  #
+  # 2.0 y no 2.5: con 2.5 se rechazaba una grieta en zigzag cuya caja rotada
+  # medía 246x106 (elongacion 2.32). Serpentear no la hace menos grieta. Un
+  # circulo o un cuadrado siguen dando 1.0, asi que 2.0 descarta lo compacto con
+  # holgura.
+  elongacion_minima: 2.0
+
+  # Cociente maximo entre el area del componente y la de la linea que lo recorre
+  # (largo x ancho). Es el filtro que distingue una GRIETA de la TEXTURA del
+  # panete, y hace falta porque la elongacion no basta: una red de textura que
+  # ocupa una franja alargada tiene elongacion alta y pasaba el filtro.
+  #
+  # Una linea cumple area = largo x ancho, asi que su cociente vale ~1. Una malla
+  # rellena una superficie y lo dispara. Medido sobre la peor foto del conjunto:
+  #     malla de textura   area 73247  largo 556  ancho 5.7  ->  23.1
+  #     grieta real        area  3320  largo 442  ancho 4.2  ->   1.8
+  #     grieta real        area  1682  largo 163  ancho 4.1  ->   2.5
+  # Con 5.0 hay margen de sobra a ambos lados. El cociente no depende del tamano
+  # ni de la orientacion, de modo que no hay que recalibrarlo por fotografia.
+  marana_maxima: 5.0
+
+  # --- Descripcion cualitativa de la forma ---
+  # No decide la gravedad -para eso hace falta el ancho en unidades fisicas- pero
+  # aporta un indicio: una fisura de retraccion tiende a ser corta, fina y recta;
+  # una estructural suele ser larga y ramificarse al propagarse.
+  forma:
+    # Indice de ramificacion = longitud total del eje / longitud de la
+    # trayectoria principal. Vale 1.0 en una fisura que es una sola linea. Se usa
+    # en lugar de contar bifurcaciones porque sobre panete cada aspereza del
+    # borde genera una: una grieta unica llegaba a reportar 402.
+    indice_ramificada: 2.0
+    tortuosidad_sinuosa: 1.35
+    longitud_larga_px: 200
+
+# -----------------------------------------------------------------------------
+# ESCALA: DE PIXELES A MILIMETROS
+#
+# La escala de una fotografia NO esta en la fotografia. Una fisura de 3 px puede
+# tener 0.1 mm o 5 mm segun la distancia a la que se disparo, y ningun
+# procesamiento puede recuperar ese dato porque nunca se registro.
+#
+# Como la NSR-10 clasifica la severidad por el ANCHO EN MILIMETROS, sin escala el
+# sistema puede decir "hay una grieta diagonal" pero no "mide 1.2 mm y requiere
+# revision". Es la limitacion que §5.1 del informe declara como la mas grave.
+#
+# Solucion: meter la escala en la escena. Se fotografia junto a la grieta un
+# marcador ArUco impreso de tamano conocido. Genera el tuyo con:
+#   python scripts/generar_marcador.py --lado-mm 50
+#
+# Si no hay marcador, las medidas se quedan en pixeles y se dice claramente.
+# El sistema NUNCA estima la escala: un dictamen con apariencia normativa y
+# fundamento inventado es peor que no dar ninguno.
+# -----------------------------------------------------------------------------
+escala:
+  activo: true
+
+  # Diccionario de marcadores. 4X4_50 tiene celdas grandes, lo que lo hace
+  # robusto al imprimirlo en papel corriente y fotografiarlo con un telefono.
+  diccionario: "DICT_4X4_50"
+
+  # Lado del marcador impreso, en milimetros. DEBE coincidir con el que se
+  # imprimio: si se declara 50 y se imprimio a 40, todas las medidas saldran un
+  # 25% mas grandes y nada en el sistema podra detectarlo.
+  #
+  # No hace falta que la impresora acierte los 50 mm. Lo que hace falta es que
+  # este numero diga la verdad sobre el marcador que se tiene en la mano: si
+  # salio de 63.5 mm, se escribe 63.5 y las medidas son igual de correctas.
+  #
+  # AL RECORTARLO, deja 1 cm de blanco alrededor del cuadro negro. Medido sobre
+  # tres fondos distintos, un borde fino se comporta PEOR que ninguno:
+  #     borde    0 mm   -0.4%   correcto
+  #     borde  1-3 mm   +5% a +14%   el detector se agarra al filo del papel
+  #     borde >=4 mm   -0.4%   correcto
+  # El error es siempre POSITIVO -mide el marcador mas grande de lo que es-, y
+  # un marcador que parece mayor hace que cada pixel valga menos: las grietas
+  # saldrian MAS ESTRECHAS de lo que son, que es la direccion peligrosa.
+  lado_marcador_mm: 50.0
+
+  # Cuanto puede apartarse el marcador de un cuadrado perfecto antes de que la
+  # escala se considere poco fiable. Es la medida de la perspectiva: si la foto
+  # se tomo en angulo, un pixel no representa la misma distancia en toda la
+  # imagen y la conversion deja de ser valida uniformemente.
+  deformacion_maxima: 0.15
+
+  # Por debajo de este tamano en pixeles, la escala se apoya en muy pocos
+  # pixeles y su error relativo se dispara. Se avisa, no se rechaza.
+  lado_minimo_px: 60
+
+  # Separacion maxima entre el marcador y la zona medida, expresada en lados de
+  # marcador. La equivalencia solo es exacta en el plano y a la distancia del
+  # marcador; mas lejos, la perspectiva la degrada.
+  #
+  # 6.0 con un marcador de 50 mm equivale a 30 cm. La hoja impresa pide pegarlo
+  # "junto a la grieta", y a 30 cm ya no lo esta. Es un aviso, no un rechazo: la
+  # medida se da igual, pero quien la lea sabe que se calculo lejos de donde se
+  # midio.
+  lados_maximos_de_distancia: 6.0
+
+# -----------------------------------------------------------------------------
 # MOTOR DE REGLAS DE RIESGO
 # Contexto normativo: NSR-10 (Reglamento Colombiano de Construccion Sismo
 # Resistente). Los valores son criterios de tamizaje para inspeccion visual

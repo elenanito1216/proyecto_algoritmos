@@ -40,6 +40,7 @@ A partir de **una sola fotografía**, el sistema responde tres preguntas y las c
 | **¿Hay una grieta?** | Una red neuronal | El computador aprendió a reconocer grietas viendo cuarenta mil fotografías ya etiquetadas |
 | **¿Está derecho el elemento?** | Geometría clásica | Se detectan los bordes rectos de la imagen y se mide cuánto se desvían de la vertical |
 | **¿Qué riesgo implica?** | Un conjunto de reglas | Reglas escritas a mano, inspiradas en la norma colombiana NSR-10 |
+| **¿Cuánto mide la grieta?** | Geometría + un marcador impreso | Recorrido, ancho y forma. En milímetros si hay una referencia de tamaño en la foto |
 
 La diferencia frente a un sistema que solo diga «riesgo alto» es que aquí **la respuesta viene con sus motivos**: la aplicación muestra qué reglas se activaron y qué criterio de ingeniería respalda cada una. Quien recibe el resultado puede discutirlo, no solo aceptarlo.
 
@@ -65,6 +66,22 @@ Se podría haber entrenado una única red neuronal que dijera directamente «rie
 
 Ese modelo comprimido para teléfono es **30.8 veces más rápido y 8 veces más pequeño** que la versión original, sin perder acierto de forma apreciable.
 
+### Medición de la grieta
+
+Con un marcador impreso de tamaño conocido junto a la fisura, el sistema pasa de «hay grieta» a:
+
+> *Fisura ramificada de **46 cm** de recorrido, con un ancho medio de **0.85 mm** y hasta **3.05 mm** en el punto más abierto.*
+
+El ancho es la magnitud con la que la NSR-10 gradúa el daño, y era **la limitación más grave que el propio informe declaraba** (§5.1).
+
+| Qué se midió | Resultado |
+|---|---|
+| Error de la escala | **0.4 %** sobre el lado del marcador |
+| Incertidumbre del ancho | El tamaño de un píxel, que se muestra junto a cada cifra |
+| Tiempo por fotografía | 0.06 a 0.9 s según el tamaño de la grieta |
+
+**Sin marcador no hay milímetros, y el sistema lo dice** en vez de estimarlos. La escala de una fotografía no está en la fotografía: una fisura de 3 px puede tener 0.1 mm o 5 mm según a qué distancia se disparó.
+
 ### Medición de inclinación
 
 | Qué se midió | Resultado |
@@ -82,7 +99,7 @@ La segunda cifra es incómoda y se reporta igual. El módulo es **muy preciso cu
 
 ## Lo que se descubrió al medir
 
-Esta es la parte del trabajo que el equipo considera más valiosa. Son cuatro hallazgos, y **dos de ellos son negativos**: mejoras que parecían buenas y que las mediciones obligaron a descartar.
+Esta es la parte del trabajo que el equipo considera más valiosa. Son cinco hallazgos, y **dos de ellos son negativos**: mejoras que parecían buenas y que las mediciones obligaron a descartar.
 
 ### 1. El conjunto de datos público estaba contaminado
 
@@ -136,9 +153,19 @@ Resultado: los dos modelos dan **exactamente las mismas respuestas** en las 60 f
 
 Se descartó antes de gastar las 2 horas del entrenamiento completo, gracias a una comprobación de 20 minutos diseñada justamente para eso.
 
-### El patrón que une los cuatro
+### 5. Para medir hizo falta meter la escala en la escena
 
-En los cuatro casos la conclusión salió de **comparar contra la alternativa aburrida antes de aceptar la interesante**. Ninguno necesitó una técnica avanzada; todos necesitaron mirar una cifra elemental que nadie había mirado.
+El sistema ya extraía la geometría de la fisura en píxeles. Convertirla a milímetros parecía el paso pequeño, y resultó ser el que no se puede programar: **la escala de una fotografía no está en la fotografía**.
+
+La solución es física: se imprime un marcador de 5 cm y se pega junto a la grieta. La demostración de que funciona es que **la medida en milímetros no cambia al alejar la cámara**, aunque la medida en píxeles se reduzca a la mitad.
+
+Por el camino aparecieron diez errores que no lanzaban ninguna excepción y producían números con dos decimales: tortuosidades geométricamente imposibles, 432 «ramificaciones» en una grieta única, un filtro que descartaba justamente las grietas diagonales, y un sesgo de ancho de exactamente +3 píxeles que resultó ser una constante y por tanto corregible. Están documentados uno a uno en §4.10 del informe.
+
+**Cuatro de ellos los encontró el usuario mirando la pantalla, no las pruebas.** Las pruebas sintéticas verificaban que el algoritmo medía bien *lo que se le daba*; ninguna comprobaba que se le estuviera dando lo correcto.
+
+### El patrón que une los cinco
+
+En los cinco casos la conclusión salió de **medir antes de dar algo por bueno**: comparar contra la alternativa aburrida, o mirar una cifra elemental que nadie había mirado. Ninguno necesitó una técnica avanzada.
 
 ---
 
@@ -148,7 +175,17 @@ Se ejecuta en el navegador y tiene cuatro pestañas.
 
 **🔍 Análisis en vivo.** Se carga una fotografía y se obtiene el resultado completo: probabilidad de grieta, ángulo de inclinación, orientación de la fisura y el semáforo de riesgo con las reglas que lo justifican. Muestra la imagen original y la procesada lado a lado, y señala con recuadros en qué zona encontró la evidencia.
 
-**📹 Cámara en vivo.** Analiza en tiempo real lo que ve la cámara, con el vídeo y el veredicto de riesgo uno al lado del otro. Puede usar la cámara del computador o **la del teléfono a través de la red local**, que es lo práctico para caminar por una edificación.
+**📹 Cámara en vivo.** Analiza en tiempo real lo que ve la cámara, con el vídeo y el veredicto de riesgo uno al lado del otro. Puede usar la cámara del computador o **la del teléfono a través de la red local**, que es lo práctico para caminar por una edificación. Un botón **Medir** congela el fotograma y extrae la geometría de la fisura.
+
+Dentro de esta pestaña, el modo **Foto a foto** analiza una sola imagen a fondo, y ofrece tres orígenes:
+
+| Origen | Dónde funciona |
+|---|---|
+| **Subir foto** | En el celular, el selector de archivos ofrece *Hacer foto* y abre la cámara del sistema. Es la vía con mejor resolución |
+| **Cámara de este dispositivo** | Solo en el computador |
+| **Capturar del stream** | Un fotograma de la cámara IP del teléfono |
+
+> **Por qué la cámara del navegador no sirve desde el celular.** Los navegadores solo dan acceso a la cámara en contexto seguro —HTTPS o localhost—, y la aplicación se sirve por HTTP en la red local. Por eso desde el teléfono hay que usar *Subir foto*, que abre la cámara del sistema y no pasa por esa restricción.
 
 **📊 Métricas del modelo.** Gráficas interactivas del desempeño. La aplicación **no calcula estas cifras**: las lee de archivos generados por los programas de evaluación, de modo que lo que aparece en pantalla es exactamente lo que se midió.
 
@@ -215,9 +252,26 @@ data/propias/      ← fotografías del equipo, para el examen final
 └── Negative/
 ```
 
+**Sobre el equilibrio entre clases.** El conjunto público tiene más paredes sanas que agrietadas, en proporción **1.44 a 1** (23 851 con grieta frente a 34 287 sin ella). No se corrige eliminando imágenes, sino **ponderando el error durante el entrenamiento**: equivocarse en una grieta cuesta 1.44 veces más que dar una falsa alarma. Así se compensa el desequilibrio sin renunciar a 10 436 fotografías reales. El razonamiento completo está en §1.5 del informe.
+
 Las fotografías propias son **60 imágenes tomadas por el equipo** y cumplen una función que el dataset público no puede cumplir: son el único material que el modelo no ha visto en ninguna forma. **Nunca se usan para entrenar ni para tomar decisiones de diseño** — en cuanto se usaran para decidir algo dejarían de ser una medida honesta.
 
-### 3. Ejecutar la aplicación
+### 3. Imprimir el marcador de escala (opcional, pero es lo que da los milímetros)
+
+```bash
+python scripts/generar_marcador.py --lado-mm 50
+```
+
+Genera `reports/marcador_escala.pdf` y su versión PNG. **Imprime el PDF**, no el PNG: una imagen no lleva dentro su tamaño físico y cada programa la escala como quiere — la app de Fotos de Windows, por ejemplo, solo ofrece «rellenar página» y «ajustar a la página», y ambas deforman la escala.
+
+1. Abre el PDF y elige **Tamaño real** o **Escala 100 %**.
+2. Mide con una regla la escalita impresa en la hoja: debe marcar 50 mm exactos.
+3. Si marca otra cosa, **no reimprimas**: mide el lado negro del cuadrado y escribe ese valor en `config.yaml` → `escala.lado_marcador_mm`. Lo que el sistema necesita no es que mida 50 mm, sino que la configuración diga la verdad sobre el marcador que tienes en la mano.
+4. **Si lo recortas, deja 1 cm de blanco alrededor.** Un borde fino de 1 a 3 mm hace medir hasta un 14 % de más — y siempre hacia arriba, lo que reportaría las grietas más estrechas de lo que son.
+
+Al fotografiar: pega la hoja **junto a la grieta y en su mismo plano**, y sitúate **de frente** a la pared. Como el marcador es cuadrado, si lo fotografías en ángulo sale como un rombo y el sistema lo detecta y avisa.
+
+### 4. Ejecutar la aplicación
 
 Si los modelos ya están entrenados (hay archivos en la carpeta `models/`), basta con:
 
@@ -225,7 +279,7 @@ Si los modelos ya están entrenados (hay archivos en la carpeta `models/`), bast
 streamlit run app/app.py
 ```
 
-### 4. Reconstruirlo todo desde cero
+### 5. Reconstruirlo todo desde cero
 
 Solo si se desea reproducir el proceso completo. Se ejecuta desde la carpeta raíz del proyecto, en este orden:
 
@@ -257,7 +311,7 @@ Y si el entrenamiento largo se interrumpe (se cierra el portátil, se va la luz)
 python scripts/train_transfer.py --config config.yaml --resume
 ```
 
-### 5. Reproducir los experimentos del análisis
+### 6. Reproducir los experimentos del análisis
 
 Cada hallazgo de la sección anterior tiene su propio programa, y cada uno puede ejecutarse por separado:
 
@@ -267,21 +321,24 @@ Cada hallazgo de la sección anterior tiene su propio programa, y cada uno puede
 | Análisis por ventanas | `python scripts/evaluar_mosaicos.py --config config.yaml` |
 | Ajuste del nivel de corte | `python scripts/calibrar_umbral.py --config config.yaml` |
 | Medición de la inclinación | `python scripts/validar_inclinacion.py --config config.yaml --imagenes data/propias` |
+| Hoja del marcador de escala | `python scripts/generar_marcador.py --lado-mm 50` |
 
-### 6. Ejecutar las pruebas automáticas
+### 7. Ejecutar las pruebas automáticas
 
 ```bash
 pytest tests -v
 ```
 
-Son **160 pruebas** que verifican el comportamiento del sistema:
+Son **232 pruebas** que verifican el comportamiento del sistema:
 
 | Archivo | Pruebas | Qué comprueba |
 |---|---|---|
 | `test_inclinacion.py` | 45 | Medición de ángulos y sus casos límite |
-| `test_camara.py` | 42 | Vídeo en tiempo real y presentación en pantalla |
+| `test_camara.py` | 48 | Vídeo en tiempo real, orientación y presentación |
 | `test_reglas.py` | 33 | Motor de riesgo, incluida la coherencia entre niveles |
 | `test_mosaicos.py` | 29 | Troceado de imágenes y elección automática de modelo |
+| `test_morfologia.py` | 39 | Geometría de la fisura sobre figuras de tamaño conocido |
+| `test_escala.py` | 20 | Conversión a milímetros, de ida y vuelta |
 | `test_degradacion.py` | 11 | El experimento descartado del hallazgo 4 |
 
 ---
@@ -304,7 +361,7 @@ crack-risk-assessment/
 │
 ├── scripts/            ← programas ejecutables desde la terminal
 ├── app/                ← la aplicación web
-├── tests/              ← las 160 pruebas automáticas
+├── tests/              ← las 232 pruebas automáticas
 ├── notebooks/          ← exploración inicial de los datos
 ├── reports/            ← el informe y las cifras medidas
 │   ├── analisis.md     ·  ANÁLISIS CRÍTICO COMPLETO
@@ -342,7 +399,9 @@ Un resultado que no se puede repetir no es un resultado. El proyecto toma cuatro
 
 Este es un **prototipo académico de tamizaje**. No sustituye la inspección de un ingeniero estructural matriculado ni constituye un dictamen técnico bajo la norma NSR-10.
 
-Hay una limitación de fondo que conviene entender: **el sistema no puede medir el ancho real de una grieta** a partir de una fotografía si no hay en la escena algún objeto de tamaño conocido que sirva de referencia — y el ancho de la fisura es precisamente el criterio que la norma usa para dictaminar. El sistema dice *dónde mirar*, no *qué concluir*.
+Sobre la medición: el sistema **sí mide el ancho de la fisura cuando hay un marcador de tamaño conocido en la escena**, y muestra la incertidumbre junto a la cifra. Sin marcador reporta píxeles y lo advierte, porque ese dato no está en la imagen.
+
+Pero medir no es dictaminar. Un ingeniero valora además el elemento, su función estructural y el patrón de fisuración del conjunto. El sistema dice *dónde mirar y cuánto mide*, no *qué concluir*.
 
 Las limitaciones completas, los sesgos del conjunto de datos y las implicaciones éticas están desarrollados en [`reports/analisis.md`](reports/analisis.md).
 
@@ -364,6 +423,9 @@ Los términos que aparecen en el informe, en lenguaje corriente:
 | **Cuantización (int8)** | Guardar los números del modelo con menos detalle. Lo vuelve mucho más pequeño y rápido, a cambio de algo de precisión |
 | **Desaplome** | Cuánto se desvía de la vertical un elemento que debería estar derecho |
 | **Sobreajuste** | Cuando un modelo memoriza los ejemplos en vez de aprender el patrón. Acierta en lo conocido y falla en lo nuevo |
+| **Marcador ArUco** | Cuadrado en blanco y negro con un código dentro. Impreso a tamaño conocido, permite convertir píxeles a milímetros |
+| **Tortuosidad** | Cuánto serpentea la grieta: su recorrido dividido por la distancia entre sus extremos. Vale 1 si es recta |
+| **Segmentar** | Separar en la imagen los píxeles que son grieta de los que son pared |
 | **Época** | Una vuelta completa del entrenamiento a todas las imágenes disponibles |
 
 ---
