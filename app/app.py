@@ -197,6 +197,47 @@ def artefactos_disponibles(config: dict[str, Any]) -> dict[str, bool]:
     }
 
 
+MODOS_DE_USO: dict[str, str] = {"foto": "Fotografía", "video": "Vídeo en vivo"}
+
+
+def uso_en_la_app(config: dict[str, Any], modelos: dict[str, Any]) -> dict[str, list[str]]:
+    """Dice que modelos del informe de evaluacion usa realmente la aplicacion.
+
+    El informe evalua tres modelos, pero la aplicacion solo usa dos, y cual sea
+    depende de ``app.modelos`` y de lo que haya en disco. Sin esta relacion, la
+    pestana de metricas presenta los tres al mismo nivel y quien la lee no puede
+    saber cual es el que responde cuando sube una fotografia.
+
+    Se resuelve con ``elegir_modelo``, el mismo criterio que usa la aplicacion,
+    de modo que si un artefacto falta y se repliega a otro formato, la etiqueta
+    acompana al repliegue en vez de mentir.
+
+    Args:
+        config: Configuracion del proyecto.
+        modelos: Bloque ``modelos`` de ``evaluacion.json``; cada entrada lleva el
+            nombre de archivo del artefacto evaluado.
+
+    Returns:
+        ``{nombre_del_modelo: [modos que lo usan]}``. Los modelos que la
+        aplicacion no usa no aparecen.
+    """
+    disponibles = artefactos_disponibles(config)
+    usos: dict[str, list[str]] = {}
+    for modo, etiqueta in MODOS_DE_USO.items():
+        formato = elegir_modelo(config, modo, disponibles)
+        if formato is None:
+            continue
+        if formato == "ensemble":
+            rutas = obtener(config, "app.ensemble.componentes", []) or []
+        else:
+            rutas = [obtener(config, f"app.archivo_{formato}", "")]
+        archivos = {Path(r).name for r in rutas if r}
+        for nombre, bloque in modelos.items():
+            if bloque.get("archivo") in archivos:
+                usos.setdefault(nombre, []).append(etiqueta)
+    return usos
+
+
 def clave_y_marca(config: dict[str, Any], formato: str) -> tuple[str, float]:
     """Devuelve la clave de cache y la fecha de modificacion de un formato.
 
@@ -952,7 +993,7 @@ def _panel_medidas(resultado: dict[str, Any], config: dict[str, Any]) -> None:
     if not hay_escala:
         st.warning(
             "**Las medidas están en píxeles, no en milímetros.** "
-            + (referencia.motivo if referencia else "No se buscó referencia de escala.")
+            + (referencia.resumen() if referencia else "No se buscó referencia de escala.")
             + "\n\nUn píxel puede valer 0.1 mm o 5 mm según a qué distancia se tomó la "
             "foto, y ese dato no está en la imagen. Para obtener milímetros, imprime el "
             "marcador con `python scripts/generar_marcador.py` y colócalo junto a la "
@@ -1313,8 +1354,8 @@ def figura_matriz_confusion(metricas: dict[str, Any], clases: list[str], titulo:
             y=[f"Real: {c}" for c in clases],
             text=texto,
             texttemplate="%{text}",
-            textfont={"size": 20},
-            colorscale="Teal",
+            textfont={"size": 20, "color": "#111111"},
+            colorscale=[[0.0, "white"], [1.0, "#8FD4E0"]],
             showscale=False,
             hovertemplate="%{y} → %{x}<br>%{z} imagenes<extra></extra>",
         )
@@ -1325,65 +1366,48 @@ def figura_matriz_confusion(metricas: dict[str, Any], clases: list[str], titulo:
     return figura
 
 
-def figura_curvas(historial: pd.DataFrame, titulo: str) -> go.Figure:
-    """Construye las curvas de entrenamiento a partir del CSV guardado.
+def figura_curvas(historial: pd.DataFrame, titulo: str, magnitud: str = "perdida") -> go.Figure:
+    """Construye una curva de entrenamiento, de una sola magnitud.
+
+    Antes dibujaba perdida y exactitud en la misma figura, con dos ejes verticales
+    de escalas distintas -una sin techo, la otra entre 0 y 1-. Con cuatro lineas
+    y dos escalas, saber que linea pertenece a que eje exigia mirar la leyenda
+    antes que el grafico. Se separan: cada figura, una magnitud y una escala.
 
     Args:
         historial: DataFrame con las columnas de ``History.history``.
         titulo: Titulo de la figura.
+        magnitud: ``"perdida"`` o ``"exactitud"``.
 
     Returns:
-        Figura de Plotly con dos ejes y: perdida y exactitud.
+        Figura de Plotly con la curva de entrenamiento y la de validacion.
     """
-    figura = go.Figure()
     epocas = historial["epoca"] if "epoca" in historial else historial.index + 1
+    if magnitud == "perdida":
+        clave, etiqueta, rango = "loss", "Pérdida", None
+    else:
+        clave = "accuracy" if "accuracy" in historial else "binary_accuracy"
+        etiqueta, rango = "Exactitud", [0, 1.02]
 
-    if "loss" in historial:
-        figura.add_trace(
-            go.Scatter(x=epocas, y=historial["loss"], name="Perdida (train)", mode="lines+markers")
-        )
-    if "val_loss" in historial:
-        figura.add_trace(
-            go.Scatter(
-                x=epocas,
-                y=historial["val_loss"],
-                name="Perdida (val)",
-                mode="lines+markers",
-                line={"dash": "dash"},
+    figura = go.Figure()
+    for columna, nombre, trazo in (
+        (clave, "Entrenamiento", {}),
+        (f"val_{clave}", "Validación", {"dash": "dash"}),
+    ):
+        if columna in historial:
+            figura.add_trace(
+                go.Scatter(
+                    x=epocas,
+                    y=historial[columna],
+                    name=nombre,
+                    mode="lines+markers",
+                    line=trazo,
+                )
             )
-        )
-    clave = "accuracy" if "accuracy" in historial else "binary_accuracy"
-    if clave in historial:
-        figura.add_trace(
-            go.Scatter(
-                x=epocas, y=historial[clave], name="Exactitud (train)", mode="lines", yaxis="y2"
-            )
-        )
-    if f"val_{clave}" in historial:
-        figura.add_trace(
-            go.Scatter(
-                x=epocas,
-                y=historial[f"val_{clave}"],
-                name="Exactitud (val)",
-                mode="lines",
-                line={"dash": "dash"},
-                yaxis="y2",
-            )
-        )
 
     figura.update_layout(**estilos.plantilla_plotly())
     figura.update_layout(
-        title=titulo,
-        height=420,
-        xaxis_title="Epoca",
-        yaxis={"title": "Perdida", "gridcolor": "rgba(128,128,128,0.22)"},
-        yaxis2={
-            "title": "Exactitud",
-            "overlaying": "y",
-            "side": "right",
-            "range": [0, 1.02],
-            "showgrid": False,
-        },
+        title=titulo, height=340, xaxis_title="Época", yaxis_title=etiqueta, yaxis_range=rango
     )
     return figura
 
@@ -1466,12 +1490,14 @@ def figura_comparativa(filas: list[dict[str, Any]]) -> go.Figure:
             header={
                 "values": [f"<b>{c}</b>" for c in vista.columns],
                 "fill_color": "rgba(34,184,207,0.20)",
+                "font": {"color": "#111111"},
                 "align": "left",
                 "height": 34,
             },
             cells={
                 "values": [_formatear(c, vista[c]) for c in vista.columns],
                 "fill_color": "rgba(128,128,128,0.06)",
+                "font": {"color": "#111111"},
                 "align": "left",
                 "height": 30,
             },
@@ -1516,7 +1542,9 @@ def pestana_metricas(config: dict[str, Any]) -> None:
         return
 
     if evaluacion.get("comparativa"):
-        st.plotly_chart(figura_comparativa(evaluacion["comparativa"]), use_container_width=True)
+        st.plotly_chart(
+            figura_comparativa(evaluacion["comparativa"]), use_container_width=True, theme=None
+        )
         st.caption(
             "Latencia medida con lote de 1 imagen; el TFLite se evalua con un solo hilo "
             f"para representar un dispositivo modesto. Equipo de medida: "
@@ -1524,7 +1552,22 @@ def pestana_metricas(config: dict[str, Any]) -> None:
         )
         st.divider()
 
-    seleccion = st.selectbox("Modelo a inspeccionar", nombres)
+    uso = uso_en_la_app(config, evaluacion["modelos"])
+    seleccion = st.selectbox(
+        "Modelo a inspeccionar",
+        nombres,
+        index=next((i for i, n in enumerate(nombres) if MODOS_DE_USO["foto"] in uso.get(n, ())), 0),
+        format_func=lambda n: (
+            f"{n} — en uso: {' y '.join(uso[n])}"
+            if n in uso
+            else f"{n} — no lo usa la aplicacion (esta para comparar)"
+        ),
+    )
+    st.caption(
+        "Estas cifras son del modelo **solo**, con la fotografía completa y umbral "
+        f"{evaluacion.get('umbral', 0.5):.2f}. No incluyen la mejora del analisis por "
+        "mosaicos que la aplicacion si aplica (§4.6 del informe la mide aparte)."
+    )
     bloque = evaluacion["modelos"][seleccion]
 
     conjuntos = [c for c in ("test", "propias") if c in bloque and "metricas" in bloque.get(c, {})]
@@ -1557,14 +1600,30 @@ def pestana_metricas(config: dict[str, Any]) -> None:
     izquierda, derecha = st.columns(2, gap="medium")
     with izquierda:
         st.plotly_chart(
-            figura_matriz_confusion(m, clases, f"Matriz de confusion · {etiquetas[conjunto]}"),
+            figura_matriz_confusion(m, clases, "Aciertos y errores"),
             use_container_width=True,
+            theme=None,
+        )
+        confusion = m.get("matriz_confusion", {})
+        st.caption(
+            "**Cómo leerla:** las filas son la verdad y las columnas lo que dijo el "
+            f"modelo. La diagonal son aciertos. Arriba a la derecha, **{confusion.get('fp', 0)} "
+            "falsas alarmas**; abajo a la izquierda, "
+            f"**{confusion.get('fn', 0)} grietas que se le escaparon**, que es el error caro."
         )
     with derecha:
         if datos.get("curva_pr"):
             st.plotly_chart(
-                figura_pr(datos["curva_pr"], f"Precision-Recall · {etiquetas[conjunto]}"),
+                figura_pr(datos["curva_pr"], "El intercambio entre avisar y acertar"),
                 use_container_width=True,
+                theme=None,
+            )
+            st.caption(
+                "**Cómo leerla:** cada punto es un ajuste posible del sistema. Hacia la "
+                "derecha detecta más grietas pero da más falsas alarmas; hacia arriba "
+                "acierta más cuando avisa, a costa de callarse algunas. No hay un punto "
+                "«correcto»: hay que elegir, y §4.1 del informe explica por qué aquí se "
+                "elige detectar de más."
             )
         else:
             st.info("La curva precision-recall exige ambas clases en el conjunto.")
@@ -1608,6 +1667,13 @@ def pestana_metricas(config: dict[str, Any]) -> None:
 
     # --- Curvas de entrenamiento -------------------------------------------
     st.markdown("#### Curvas de entrenamiento")
+    st.caption(
+        "Cómo fue aprendiendo cada modelo, vuelta a vuelta sobre las imágenes. "
+        "**La pérdida mide cuánto se equivoca** y debe bajar; **la exactitud mide cuánto "
+        "acierta** y debe subir. La línea continua es con las imágenes de estudio y la "
+        "discontinua con las apartadas: si se separan mucho, el modelo está memorizando "
+        "en vez de aprender."
+    )
     encontradas = False
     for nombre in (
         obtener(config, "transfer.nombre", "mobilenetv2"),
@@ -1616,9 +1682,20 @@ def pestana_metricas(config: dict[str, Any]) -> None:
         ruta = f"reports/metricas/historial_{nombre}.csv"
         historial = cargar_artefacto_csv(ruta, marca_de(ruta))
         if historial is not None and not historial.empty:
-            st.plotly_chart(
-                figura_curvas(historial, f"Entrenamiento · {nombre}"), use_container_width=True
-            )
+            st.markdown(f"**{nombre}**")
+            izq, der = st.columns(2, gap="medium")
+            with izq:
+                st.plotly_chart(
+                    figura_curvas(historial, "Pérdida · debe bajar", "perdida"),
+                    use_container_width=True,
+                    theme=None,
+                )
+            with der:
+                st.plotly_chart(
+                    figura_curvas(historial, "Exactitud · debe subir", "exactitud"),
+                    use_container_width=True,
+                    theme=None,
+                )
             encontradas = True
     if not encontradas:
         st.info("No hay historiales de entrenamiento en reports/metricas/.")
@@ -1648,129 +1725,6 @@ def pestana_metricas(config: dict[str, Any]) -> None:
             st.dataframe(csv_val, use_container_width=True, hide_index=True)
 
 
-# --------------------------------------------------------------------------- #
-# Pestana 3: acerca del proyecto
-# --------------------------------------------------------------------------- #
-
-
-def pestana_acerca(config: dict[str, Any]) -> None:
-    """Renderiza la pestana informativa del proyecto.
-
-    Args:
-        config: Configuracion del proyecto.
-    """
-    izquierda, derecha = st.columns([3, 2], gap="large")
-
-    with izquierda:
-        st.markdown(
-            """
-#### El problema
-
-Tras un sismo, o simplemente con el paso del tiempo, una edificación acumula
-señales de daño que un ojo no entrenado no sabe jerarquizar. Este prototipo
-automatiza dos de esas señales sobre una fotografía corriente:
-
-1. **¿Hay grieta?** Una red convolucional clasifica la superficie.
-2. **¿Está a plomo?** Canny y la transformada de Hough miden la desviación del
-   elemento respecto a la vertical.
-
-Un motor de reglas combina ambas señales con el tipo de elemento y la
-orientación de la fisura para emitir un nivel de riesgo **explicable**: cada
-nivel llega acompañado de las reglas que lo dispararon y del criterio de
-ingeniería que las motiva.
-
-#### Enfoque técnico
-
-| Módulo | Técnica | Por qué |
-|---|---|---|
-| Clasificación | MobileNetV2 (transfer learning) | Diseñada para inferencia móvil; convolución separable en profundidad |
-| Línea base | CNN propia de 3 bloques | Punto de comparación obligatorio |
-| Inclinometría | Canny + HoughLinesP | Geometría explícita, sin datos etiquetados de ángulo |
-| Ángulo robusto | Mediana ponderada por longitud | Inmune a líneas espurias (ventanas, cables, marcos) |
-| Riesgo | Motor de reglas puro | Auditable y recalibrable sin reentrenar |
-| Despliegue | TensorFlow Lite int8 | ~4× menos tamaño; viable en gama baja |
-
-#### Limitaciones que hay que decir en voz alta
-
-- **No mide el ancho real de la grieta.** Sin una referencia métrica en la
-  escena (una regla, una moneda), la escala es desconocida. El ancho de fisura
-  es justamente el criterio que usa la NSR-10, y este sistema no puede darlo.
-- **La perspectiva sesga el ángulo.** El desaplome se mide en el plano de la
-  imagen. Una foto tomada en ángulo introduce error sistemático.
-- **El dataset no representa la construcción informal.** Está dominado por
-  hormigón de laboratorio bien iluminado; el ladrillo a la vista, el pañete
-  agrietado o el bahareque están fuera de su distribución.
-- **Un falso negativo es el error caro.** En contexto sísmico, una grieta
-  peligrosa no detectada puede costar vidas. Por eso el proyecto reporta el
-  recall por separado y permite ajustar el umbral.
-
-#### Aviso ético
-
-Este sistema es una **herramienta de tamizaje**, no un dictamen. Usarlo para
-declarar habitable una edificación es un uso indebido con consecuencias
-potencialmente graves. El análisis completo está en `reports/analisis.md`.
-            """
-        )
-
-    with derecha:
-        st.markdown("#### Ficha del proyecto")
-        filas = [
-            estilos.fila_dato("Asignatura", "Algoritmos y Programación"),
-            estilos.fila_dato("Programa", "Ingeniería en IA · UIS"),
-            estilos.fila_dato("Periodo", "2026-2"),
-            estilos.fila_dato(
-                "Resolución de entrada",
-                f"{obtener(config, 'preproceso.alto')}×{obtener(config, 'preproceso.ancho')}",
-            ),
-            estilos.fila_dato("Arquitectura", str(obtener(config, "transfer.arquitectura_base"))),
-            estilos.fila_dato("Alpha", str(obtener(config, "transfer.alpha"))),
-            estilos.fila_dato("Semilla global", str(obtener(config, "proyecto.semilla"))),
-        ]
-        st.markdown(
-            f'<div class="cra-tarjeta"><h4>Configuración activa</h4>{"".join(filas)}</div>',
-            unsafe_allow_html=True,
-        )
-
-        st.write("")
-        st.markdown("#### Equipo")
-        equipo = obtener(config, "app.equipo", []) or []
-        filas_equipo = [
-            estilos.fila_dato(str(m.get("nombre", "—")), str(m.get("rol", ""))) for m in equipo
-        ]
-        st.markdown(
-            f'<div class="cra-tarjeta"><h4>Integrantes</h4>{"".join(filas_equipo)}</div>',
-            unsafe_allow_html=True,
-        )
-
-        st.write("")
-        st.markdown("#### Umbrales de riesgo vigentes")
-        cfg_riesgo = config.get("riesgo", {})
-        filas_riesgo = [
-            estilos.fila_dato("Grieta detectada", f"P ≥ {cfg_riesgo.get('umbral_grieta')}"),
-            estilos.fila_dato("Evidencia fuerte", f"P ≥ {cfg_riesgo.get('umbral_grieta_alta')}"),
-            estilos.fila_dato(
-                "Desaplome · atención", f"≥ {cfg_riesgo.get('desaplome_atencion_grados')}°"
-            ),
-            estilos.fila_dato(
-                "Desaplome · severo", f"≥ {cfg_riesgo.get('desaplome_severo_grados')}°"
-            ),
-        ]
-        st.markdown(
-            f'<div class="cra-tarjeta"><h4>Definidos en config.yaml</h4>{"".join(filas_riesgo)}</div>',
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "Ningún umbral está incrustado en el código: todos viven en `config.yaml` "
-            "y se pueden recalibrar con un ingeniero estructural sin tocar Python."
-        )
-
-
-# --------------------------------------------------------------------------- #
-# Pestana 4: camara en vivo
-# --------------------------------------------------------------------------- #
-
-
-@st.cache_data(show_spinner="Buscando camaras...", ttl=300)
 def detectar_camaras(max_indice: int) -> list[int]:
     """Sondea que camaras hay conectadas, cacheando el resultado.
 
@@ -2932,12 +2886,11 @@ def main() -> None:
         except (FileNotFoundError, ValueError, RuntimeError) as error:
             st.sidebar.error(f"No se pudo cargar el modelo: {error}")
 
-    pestana1, pestana2, pestana3, pestana4 = st.tabs(
+    pestana1, pestana2, pestana3 = st.tabs(
         [
             "🔍 Análisis en vivo",
             "📹 Cámara en vivo",
             "📊 Métricas del modelo",
-            "ℹ️ Acerca del proyecto",
         ]
     )
 
@@ -2967,9 +2920,6 @@ def main() -> None:
             )
         else:
             pestana_metricas(config)
-
-    with pestana4:
-        pestana_acerca(config)
 
     st.markdown(
         '<div class="cra-pie">Prototipo académico · Universidad Industrial de Santander · '

@@ -378,3 +378,79 @@ def test_los_giros_no_impiden_leer_el_marcador_pero_el_espejo_si():
 
     reflejada = app.orientar_fotograma(escena, {"espejo": True})
     assert not detectar_escala(reflejada, config).detectada
+
+
+# ---------------------------------------------------------------------------
+# uso_en_la_app
+#
+# El informe de evaluacion trae tres modelos y la aplicacion solo usa dos. Si
+# esta relacion se rompe, la pestana de metricas sigue funcionando pero atribuye
+# al sistema las cifras de un modelo que no interviene, que es peor que un error
+# visible.
+# ---------------------------------------------------------------------------
+
+_DISCO_COMPLETO = {
+    "keras": True,
+    "tflite": True,
+    "ensemble": True,
+    "baseline": True,
+    "evaluacion": True,
+}
+_CONFIG_APP: dict[str, Any] = {
+    "app": {
+        "modelos": {"foto": "keras", "video": "tflite"},
+        "archivo_keras": "models/mobilenetv2_finetuned.keras",
+        "archivo_tflite": "models/mobilenetv2_int8.tflite",
+        "archivo_baseline": "models/baseline_cnn.keras",
+        "ensemble": {
+            "componentes": ["models/mobilenetv2_finetuned.keras", "models/baseline_cnn.keras"]
+        },
+    }
+}
+_MODELOS_EVALUADOS: dict[str, Any] = {
+    "Linea base (CNN propia)": {"archivo": "baseline_cnn.keras"},
+    "MobileNetV2 (.keras)": {"archivo": "mobilenetv2_finetuned.keras"},
+    "MobileNetV2 TFLite int8": {"archivo": "mobilenetv2_int8.tflite"},
+}
+
+
+def test_cada_modo_queda_atribuido_a_su_modelo(monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _cargar_app()
+    monkeypatch.setattr(app, "artefactos_disponibles", lambda _c: _DISCO_COMPLETO)
+    uso = app.uso_en_la_app(_CONFIG_APP, _MODELOS_EVALUADOS)
+    assert uso["MobileNetV2 (.keras)"] == ["Fotografía"]
+    assert uso["MobileNetV2 TFLite int8"] == ["Vídeo en vivo"]
+
+
+def test_la_linea_base_no_se_presenta_como_parte_del_sistema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _cargar_app()
+    monkeypatch.setattr(app, "artefactos_disponibles", lambda _c: _DISCO_COMPLETO)
+    uso = app.uso_en_la_app(_CONFIG_APP, _MODELOS_EVALUADOS)
+    assert "Linea base (CNN propia)" not in uso
+
+
+def test_la_etiqueta_acompana_al_repliegue_cuando_falta_un_artefacto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Sin TFLite el video se repliega a MobileNetV2: entonces un mismo modelo
+    # responde en los dos modos, y la etiqueta debe decirlo.
+    app = _cargar_app()
+    monkeypatch.setattr(
+        app, "artefactos_disponibles", lambda _c: {**_DISCO_COMPLETO, "tflite": False}
+    )
+    uso = app.uso_en_la_app(_CONFIG_APP, _MODELOS_EVALUADOS)
+    assert uso["MobileNetV2 (.keras)"] == ["Fotografía", "Vídeo en vivo"]
+    assert "MobileNetV2 TFLite int8" not in uso
+
+
+def test_el_ensemble_atribuye_sus_dos_componentes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # El ensemble no es un archivo: si un modo lo usa, los dos modelos que lo
+    # componen si forman parte del sistema.
+    app = _cargar_app()
+    monkeypatch.setattr(app, "artefactos_disponibles", lambda _c: _DISCO_COMPLETO)
+    config = {"app": {**_CONFIG_APP["app"], "modelos": {"foto": "ensemble", "video": "tflite"}}}
+    uso = app.uso_en_la_app(config, _MODELOS_EVALUADOS)
+    assert uso["MobileNetV2 (.keras)"] == ["Fotografía"]
+    assert uso["Linea base (CNN propia)"] == ["Fotografía"]

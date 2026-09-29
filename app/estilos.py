@@ -365,23 +365,43 @@ def fila_dato(clave: str, valor: str) -> str:
 def plantilla_plotly() -> dict[str, Any]:
     """Devuelve los ajustes de layout comunes a todas las figuras de Plotly.
 
-    Se usan fondos transparentes y un gris intermedio para el texto de los ejes:
-    Plotly no hereda las variables CSS del tema, y un gris medio conserva
-    contraste suficiente tanto sobre fondo claro como sobre fondo oscuro. Es la
-    unica forma de que un mismo grafico sea legible en los dos temas sin
-    duplicar la definicion de cada figura.
+    Fondo blanco solido y texto negro, fijados en la figura y no heredados. Las
+    figuras se pintan con ``theme=None`` en ``st.plotly_chart``: con el tema de
+    Streamlit activo, la aplicacion reescribia el color de la letra al del tema y
+    sobre el fondo blanco quedaba texto blanco, es decir invisible.
+
+    Antes el fondo era transparente para heredar el
+    tema, pero sobre fondo oscuro las rejillas y los ejes quedaban al limite de
+    lo legible, y una grafica que hay que forzar la vista para leer no cumple su
+    funcion. Con fondo propio la figura se lee igual en cualquier tema y se puede
+    capturar para el informe sin que salga con el fondo de la aplicacion.
 
     Returns:
         Diccionario de argumentos para ``figura.update_layout``.
     """
-    gris = "#8B949E"
+    tinta = "#111111"
+    rejilla = {
+        "gridcolor": "rgba(17,17,17,0.14)",
+        "zerolinecolor": "rgba(17,17,17,0.30)",
+        "linecolor": "rgba(17,17,17,0.45)",
+        "tickfont": {"color": tinta, "size": 11},
+        "title": {"font": {"color": tinta, "size": 12}},
+    }
     return {
-        "paper_bgcolor": "rgba(0,0,0,0)",
-        "plot_bgcolor": "rgba(0,0,0,0)",
-        "font": {"color": gris, "size": 12},
-        "xaxis": {"gridcolor": "rgba(128,128,128,0.22)", "zerolinecolor": "rgba(128,128,128,0.35)"},
-        "yaxis": {"gridcolor": "rgba(128,128,128,0.22)", "zerolinecolor": "rgba(128,128,128,0.35)"},
+        "paper_bgcolor": "white",
+        "plot_bgcolor": "white",
+        # El titulo no se fija aqui: cada figura lo pone con title="...", lo que
+        # sustituye el objeto entero. Hereda el color de "font", que si persiste.
+        "font": {"color": tinta, "size": 12},
+        "xaxis": dict(rejilla),
+        "yaxis": dict(rejilla),
         "margin": {"l": 55, "r": 25, "t": 55, "b": 50},
-        "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
+        "legend": {
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "x": 0,
+            "font": {"color": tinta},
+        },
         "hoverlabel": {"font_size": 12},
     }

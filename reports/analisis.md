@@ -297,30 +297,31 @@ Fuente: `entrenamiento_mobilenetv2.json` → `metricas_val_congelado` / `metrica
 
 **Respuestas a las tres preguntas del apartado.**
 
-1. **El preentrenamiento aporta +0.0229 de F1** (0.9345 → 0.9574) y, más relevante, **reduce los falsos negativos de 403 a 275: un 32 % menos de grietas que se escapan**. El costo es de **52× más parámetros** (28 145 → 1 464 113) y **8.7× más latencia** en formato `.keras` (17.1 → 148.4 ms). Dicho sin adornos: se compran 2.3 puntos de F1 muy caros. Lo que salva el trade-off no es el transfer learning por sí solo, sino la cuantización posterior (§3.2): el TFLite int8 conserva la mayor parte de la ganancia y además es **3.5× más rápido que la propia línea base**.
+1. **El preentrenamiento aporta +0.0229 de F1** (0.9345 → 0.9574) y, más relevante, **reduce los falsos negativos de 403 a 275: un 32 % menos de grietas que se escapan**. El costo es de **52× más parámetros** (28 145 → 1 464 113) y **10.2× más latencia** en formato `.keras` (17.8 → 181.8 ms). Dicho sin adornos: se compran 2.3 puntos de F1 muy caros. Lo que salva el trade-off no es el transfer learning por sí solo, sino la cuantización posterior (§3.2): el TFLite int8 conserva la mayor parte de la ganancia y además es **3.8× más rápido que la propia línea base**.
 2. **El fine-tuning mejora de verdad, no sobreajusta.** Sobre validación mejora las cuatro métricas a la vez —F1 +0.0075, ROC-AUC +0.0027— y reduce simultáneamente falsos negativos (284 → 255) y falsos positivos (49 → 26). Cuando una segunda etapa mejora ambos errores a la vez, no está desplazando el umbral: está aprendiendo. Descongelar 19 capas con LR 1e-5 fue una intervención conservadora y acertada.
-3. **La cuantización int8 cuesta 0.0125 de F1** (0.9574 → 0.9449) y **90 falsos negativos más** (275 → 365), a cambio de **8.0× menos tamaño y 30.8× menos latencia**. En el conjunto de prueba el intercambio es claramente favorable. Fuera de distribución **no lo es**, y esa es la advertencia de §3.5.
+3. **La cuantización int8 cuesta 0.0125 de F1** (0.9574 → 0.9449) y **90 falsos negativos más** (275 → 365), a cambio de **8.0× menos tamaño y 38.5× menos latencia**. En el conjunto de prueba el intercambio es claramente favorable. Fuera de distribución **no lo es**, y esa es la advertencia de §3.5.
 
 ### 3.2 ¿Cuánto cuesta ejecutarlo?
 
-> **En pocas palabras.** El modelo comprimido tarda 4.82 milisegundos por fotografía y ocupa 1.74 MB. Es 30.8 veces más rápido que la versión sin comprimir de la que sale, y **3.5 veces más rápido que la red pequeña**, que tiene 52 veces menos parámetros. El tamaño del modelo predice mal la velocidad.
+> **En pocas palabras.** El modelo comprimido tarda 4.72 milisegundos por fotografía y ocupa 1.74 MB. Es 38.5 veces más rápido que la versión sin comprimir de la que sale, y **3.8 veces más rápido que la red pequeña**, que tiene 52 veces menos parámetros. El tamaño del modelo predice mal la velocidad.
 
-Latencia medida con lote de 1 imagen, 60 repeticiones tras 10 de calentamiento; TFLite con **un solo hilo** para representar un dispositivo modesto.
+Latencia medida con lote de 1 imagen, 60 repeticiones tras 10 de calentamiento; TFLite con **un solo hilo** para representar un dispositivo modesto. **Con el portátil conectado a la corriente**: con bateria, la misma medida da 27.2, 274.5 y 8.5 ms, un 50 % peor en bloque por el recorte de frecuencia. Una latencia sin decir en que estado se midio no significa nada.
 Fuente: `comparativa.csv` y `exportacion_tflite.json`
 
 | Modelo | Parámetros | Tamaño (MB) | Latencia media (ms) | Desv. est. (ms) | p95 (ms) | img/s | Memoria (MB) |
 |---|---|---|---|---|---|---|---|
-| Línea base | 28 145 | 0.39 | 17.09 | 1.08 | 18.78 | 58.5 | 0.00 |
-| MobileNetV2 `.keras` | 1 464 113 | 13.90 | 148.37 | 1.80 | 151.06 | 6.7 | 0.00 |
+| Línea base | 28 145 | 0.39 | 17.80 | 0.68 | 19.02 | 56.2 | 0.00 |
+| MobileNetV2 `.keras` | 1 464 113 | 13.90 | 181.81 | 32.71 | 242.18 | 5.5 | 0.25 |
 | MobileNetV2 TFLite float32 | — | 5.46 | no medida | — | — | — | — |
-| **MobileNetV2 TFLite int8** | — | **1.74** | **4.82** | 0.77 | 6.35 | **207.5** | 0.18 |
+| **MobileNetV2 TFLite int8** | — | **1.74** | **4.72** | 0.14 | 5.00 | **211.9** | 0.00 |
 
-Dos aclaraciones de método, para que las cifras se lean bien:
+Tres aclaraciones de método, para que las cifras se lean bien:
 
 - La variante **float32 se exportó pero no se perfiló**: `evaluate.py` mide el artefacto declarado en `app.archivo_tflite`, que es el int8. Su tamaño (5.46 MB) sí permite separar las dos fuentes de compresión: **convertir a TFLite aporta 2.5×** (13.90 → 5.46 MB, por eliminar el estado del optimizador y el grafo de entrenamiento) y **cuantizar aporta otros 3.1×** (5.46 → 1.74 MB, por pasar de 32 a 8 bits). Total 8.0×.
-- El **incremento de memoria de 0.00 MB** en los modelos Keras no significa que no consuman: significa que TensorFlow ya había reservado sus buffers durante el calentamiento, así que la inferencia en régimen no pide RAM adicional. El consumo absoluto del proceso fue de 990 MB con la línea base y 2 032 MB con MobileNetV2. El TFLite int8 sí muestra un incremento medible (0.18 MB) porque el intérprete reserva sus tensores bajo demanda.
+- El **incremento de memoria de 0.00 MB** no significa que los modelos no consuman: significa que los buffers ya estaban reservados desde el calentamiento, así que la inferencia en régimen no pide RAM adicional. Los tres incrementos medidos (0.00, 0.25 y 0.00 MB) están en el suelo de ruido del instrumento y no distinguen un modelo de otro. Lo que sí distingue es el consumo absoluto del proceso: **905 MB con la línea base y 2 009 MB con MobileNetV2**.
+- La **desviación de 32.71 ms de MobileNetV2** —frente a 0.68 y 0.14 ms de los otros dos— no es ruido de medida, es calentamiento. Sus 60 repeticiones van de 150.4 a 258.9 ms, con mediana 163.2 por debajo de la media 181.8: los tiempos suben conforme avanza la serie. Es el único de los tres que mantiene la CPU al máximo el tiempo suficiente para que el portátil recorte la frecuencia. **Conviene leerlo como un argumento a favor del diseño, no en contra:** el modelo que se estrangula es el de fotografía, donde no hay presupuesto de tiempo, y el que debe cumplir los 33 ms del vídeo es el TFLite, cuya desviación de 0.14 ms muestra que ni se despeina. Una arquitectura que usara el `.keras` en vídeo heredaría esta inestabilidad.
 
-**El resultado que sostiene la viabilidad móvil:** el TFLite int8 corre a **4.82 ms por imagen (207 img/s) ocupando 1.74 MB**, en la CPU de un portátil sin GPU y con un solo hilo. Es **30.8× más rápido que el `.keras`** del que procede y **3.5× más rápido que la línea base**, que tiene 52 veces menos parámetros. Ahí se ve que la eficiencia no viene del tamaño del modelo sino del formato de ejecución.
+**El resultado que sostiene la viabilidad móvil:** el TFLite int8 corre a **4.72 ms por imagen (212 img/s) ocupando 1.74 MB**, en la CPU de un portátil sin GPU y con un solo hilo. Es **38.5× más rápido que el `.keras`** del que procede y **3.8× más rápido que la línea base**, que tiene 52 veces menos parámetros. Ahí se ve que la eficiencia no viene del tamaño del modelo sino del formato de ejecución.
 
 ### 3.3 ¿Cuánto costó construirlo?
 
@@ -395,7 +396,7 @@ En el modelo `.keras`, bajar el umbral a 0.10 recupera 4 de las 10 grietas perdi
 
 La causa es que la cuantización comprime el rango dinámico de la salida, y ante entradas fuera de distribución ese rango se **satura en cero**. La mediana pasa de 0.6383 a 0.0176: la información que permitía recalibrar el modelo ya no existe en el artefacto.
 
-**La implicación práctica es seria y no aparece en ninguna métrica del conjunto de prueba.** Sobre `test`, el int8 parece una ganga: −0.0125 de F1 a cambio de 8× menos tamaño y 30.8× menos latencia. Lo que esa comparación oculta es que **el modelo cuantizado pierde la capacidad de ser ajustado al dominio de despliegue**. El umbral de decisión —la única herramienta barata que tiene el proyecto para priorizar recall (§4.1)— deja de funcionar justo en el escenario para el que se diseñó.
+**La implicación práctica es seria y no aparece en ninguna métrica del conjunto de prueba.** Sobre `test`, el int8 parece una ganga: −0.0125 de F1 a cambio de 8× menos tamaño y 38.5× menos latencia. Lo que esa comparación oculta es que **el modelo cuantizado pierde la capacidad de ser ajustado al dominio de despliegue**. El umbral de decisión —la única herramienta barata que tiene el proyecto para priorizar recall (§4.1)— deja de funcionar justo en el escenario para el que se diseñó.
 
 Para el despliegue real esto sugiere una arquitectura distinta de la que se supone por defecto: usar int8 como **filtro rápido de primer paso** y reservar el `.keras` (o al menos una variante float32) para los casos dudosos, en lugar de sustituir uno por otro sin más.
 
@@ -1366,7 +1367,7 @@ El proyecto entrega un sistema completo y funcional que combina una red neuronal
 Lo que **sí** puede afirmarse:
 
 - Detecta grietas en superficies de hormigón similares a las del entrenamiento con **F1 de 0.9423 sobre el conjunto depurado de duplicados** (275 falsos negativos sobre 2 667 grietas reales), frente al 0.9109 de una CNN propia entrenada desde cero (§3.1 y §3.7).
-- Corre en CPU, sin GPU, a **4.82 ms por imagen (207 img/s) con un artefacto de 1.74 MB**: 30.8× más rápido y 8.0× más pequeño que el modelo Keras del que procede (§3.2). La viabilidad en un dispositivo modesto está medida, no supuesta.
+- Corre en CPU, sin GPU, a **4.72 ms por imagen (212 img/s) con un artefacto de 1.74 MB**: 38.5× más rápido y 8.0× más pequeño que el modelo Keras del que procede (§3.2). La viabilidad en un dispositivo modesto está medida, no supuesta.
 - Se entrenó por completo en **4 h 5 min de CPU** para los tres modelos (§3.3), lo que lo hace reproducible sin infraestructura especial.
 - Produce un juicio de riesgo **explicable, auditable y recalibrable sin reentrenar**, verificado por 33 pruebas unitarias del motor de reglas, dentro de una suite de 145 que cubre también inclinometría, cámara y análisis por mosaicos.
 - Permite comprar recall a precio conocido: **97 grietas adicionales por 140 falsas alarmas** al bajar el umbral a 0.2495 (§4.1).

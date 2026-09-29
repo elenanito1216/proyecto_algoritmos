@@ -61,7 +61,7 @@ Se podría haber entrenado una única red neuronal que dijera directamente «rie
 |---|---|---|
 | **Acierto general (F1)** | **0.9423** | Resume en un número cuántas grietas encuentra y cuántas veces se equivoca al avisar. Va de 0 a 1 |
 | Grietas que sí detecta | 90.7 % | De cada 100 grietas reales, encuentra unas 91 |
-| Tiempo por fotografía | **4.82 milisegundos** | Unas 207 fotografías por segundo, en un computador corriente sin tarjeta gráfica |
+| Tiempo por fotografía | **4.72 milisegundos** | Unas 212 fotografías por segundo, en un computador corriente sin tarjeta gráfica |
 | Tamaño del modelo | **1.74 MB** | Cabe holgadamente en un teléfono |
 
 Ese modelo comprimido para teléfono es **30.8 veces más rápido y 8 veces más pequeño** que la versión original, sin perder acierto de forma apreciable.
