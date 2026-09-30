@@ -366,8 +366,43 @@ medicion:
     tortuosidad_maxima: 3.0
     ramificacion_maxima: 6.0
 
+  # --- Deteccion de la fisura: forma de cresta, no brillo ---
+  # El black-hat pregunta "cuanto mas oscuro es esto que su entorno", y sobre un
+  # panete rugoso eso enciende el 30% de la imagen: la grieta queda pegada a la
+  # textura en un unico componente de 443 424 px que luego hay que tirar entero.
+  # El filtro de crestas (Frangi) pregunta otra cosa: "tiene esto forma de
+  # linea", mirando los autovalores del Hessiano. Con corte en 0.05 entran los 32
+  # puntos de una grieta real encendiendo el 10.8% de la imagen.
+  cresta:
+    activo: true
+    # Sigmas del suavizado. Cada una responde a un grosor de linea distinto y se
+    # toma el maximo: una fisura fina y una ancha se detectan igual de bien.
+    escalas: [1.0, 2.0, 3.0]
+    # Corte sobre la respuesta, entre 0 y 1. Medido sobre la foto problematica:
+    #   0.05 -> 32/32 puntos de la grieta, 10.8% de la imagen encendida
+    #   0.10 -> 28/32,  4.6%
+    #   0.15 -> 25/32,  2.4%
+    umbral: 0.05
+    # Salto maximo de gris entre los dos lados del trazo, en niveles de gris.
+    # Es lo que separa una fisura de un CANTO entre dos paredes, que por forma
+    # son identicos -el canto es incluso mas largo y mas recto-. Medido:
+    #   canto de la pared   17.5     fisura   2.5
+    # El limite de 8 deja un margen de 3x sobre lo observado en fisuras.
+    salto_maximo: 8.0
+    # No hay un detector mejor: el de crestas recupera fisuras finas que Otsu
+    # funde con la textura -en 2 de 31 fotos Otsu no encontraba nada-, pero sobre
+    # pared lisa Otsu sigue el trazo mas lejos. Con "activo: true" se mide con
+    # los DOS y se conserva el recorrido mas largo que sea verosimil: sobre las
+    # 31 fotografias, 12 mejoran y ninguna empeora. Cuesta medir dos veces.
+
   # --- Filtros de lo que puede ser una grieta ---
   # Area minima, como fraccion del recorte y como suelo absoluto en pixeles.
+  # ATENCION, es el filtro que mas recorrido de fisura se come: en una foto de
+  # 1200x1600 exige 960 px, o sea 320 px seguidos para un trazo de 3 px de
+  # grosor. Se probo cambiarlo por un minimo de LARGO -dimensionalmente mas
+  # correcto, porque una grieta es una linea- y salio peor sobre las 31
+  # fotografias: miles de motas de textura pasaban a competir, cinco grietas bien
+  # medidas se desplomaron y el tiempo se multiplico por veinte. Ver §5.5.
   area_minima_relativa: 0.0005
   area_minima_absoluta: 30
   # Una grieta es larga y estrecha. Un componente tan ancho como largo es una

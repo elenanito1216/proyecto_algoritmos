@@ -368,7 +368,7 @@ Fuente: `evaluacion.json` → `modelos.<etiqueta>.test` frente a `.propias`
 
 El ROC-AUC sobre fotos propias (0.9100 línea base, 0.8400 MobileNetV2, 0.8288 TFLite) confirma que **sí queda señal discriminante**: el problema no es que los modelos estén ciegos, sino que su umbral está mal calibrado para este dominio. Esa distinción es la que abre la puerta a §3.5.
 
-Con 40 imágenes, los intervalos de confianza son anchos y estas cifras sirven para detectar un fallo grueso de generalización, no para estimarlo con precisión (§5.7). El fallo grueso está detectado.
+Con 40 imágenes, los intervalos de confianza son anchos y estas cifras sirven para detectar un fallo grueso de generalización, no para estimarlo con precisión (§5.9). El fallo grueso está detectado.
 
 ### 3.5 Comprimir el modelo tiene un costo oculto
 
@@ -600,7 +600,7 @@ Ese 11 % tiene además una lectura interesante: la línea base es el **1.9 % de 
 
 #### Limitación
 
-Estos resultados sobre fotos propias se apoyan en **40 imágenes**: la diferencia entre 0.6667 y 0.8235 son 4 grietas más detectadas. La dirección del efecto es consistente en todas las variantes con ensemble y coherente con el mecanismo propuesto, pero la magnitud tiene un intervalo de confianza ancho (§5.7). Sobre el conjunto de prueba, con 7 389 imágenes, el efecto medido es fiable y **es negativo**: ahí el ensemble no ayuda.
+Estos resultados sobre fotos propias se apoyan en **40 imágenes**: la diferencia entre 0.6667 y 0.8235 son 4 grietas más detectadas. La dirección del efecto es consistente en todas las variantes con ensemble y coherente con el mecanismo propuesto, pero la magnitud tiene un intervalo de confianza ancho (§5.9). Sobre el conjunto de prueba, con 7 389 imágenes, el efecto medido es fiable y **es negativo**: ahí el ensemble no ayuda.
 
 ---
 
@@ -1156,6 +1156,53 @@ Efecto sobre las 27 fotografías propias medibles:
 
 Con resultados idénticos.
 
+**11. Elegir el grupo por área medía la pared.** Lo encontró otra vez el usuario, sobre una foto nueva: el sistema dibujó un garabato sobre el pañete liso e ignoró la grieta, que estaba en la misma región. El filtro de maraña del error 8 no lo impidió, porque la textura no entraba como **un** componente ancho sino como una nube de trocitos finos, cada uno aceptable por separado, que al coserse sumaban más área que la fisura:
+
+| Grupo | Área | Recorrido | Maraña | Contraste | Qué es |
+|---|---|---|---|---|---|
+| 5 | 5 319 | ~300 | 6.20 | 54.2 | textura del pañete — **ganaba** |
+| 4 | 794 | 93.3 | 2.61 | 54.4 | mancha de textura |
+| 1 | 714 | 129.3 | 1.66 | 62.9 | churrete de pintura |
+| 2 | **546** | 111.4 | 1.61 | **67.4** | **la grieta** |
+
+El área mide cuánta tinta hay, no cuánta fisura, y **penaliza a la grieta cuanto más limpia sea**. Se probaron los tres rasgos por separado sobre las 30 fotos propias más ésta, y ninguno aguanta solo: por contraste, dos fotos abandonan una grieta de 1465 px para irse a una mota de veinte; por recorrido, la mancha también es larga y gana; y descartar por maraña es imposible, porque la textura de esta foto da 6.20 pero **una grieta auténtica ramificada de otra da 5.13**, y no hay corte que las separe.
+
+Lo que sí funciona es **normalizar los tres dentro de la propia fotografía y sumarlos**: gana el trazo largo, oscuro y de un solo hilo. La normalización no es cosmética —el contraste del *black-hat* vale ~60 en una imagen y ~10 en otra según la luz, así que sólo significa algo comparado con los demás trazos de esa misma foto— y sumar en vez de multiplicar impide que un rasgo alto tape a los otros dos, que es exactamente lo que dejaba ganar al churrete de pintura por un 5 %.
+
+Sobre las 31 fotografías: elige lo mismo que el área en 24, **mejor en 4** y algo más corto sobre la misma grieta en 1, revisadas una a una sobre la imagen.
+
+**12. El umbral de brillo no puede aislar una fisura fina sobre pañete.** El usuario volvió a señalarlo: el sistema medía 42 mm de una grieta de más de 500. El diagnóstico, medido en tres puntos de la cadena: el *black-hat* responde 56–115 a lo largo de **toda** la grieta, muy por encima del umbral de Otsu (32), así que la fisura sí se detecta entera — pero la textura del pañete también lo supera, y todo queda unido en un componente de 443 424 px que el filtro de maraña descarta, correctamente, por no poder ser una fisura. **La grieta se pierde dentro de lo que se tira.**
+
+Tres intentos evidentes, los tres medidos y los tres fallidos:
+
+| Intento | Qué pasó |
+|---|---|
+| Medir la imagen entera | Elige textura: 303 px en la esquina equivocada |
+| Umbral a 1.5 × Otsu | Cobertura de 4/32 a 19/32 puntos, pero adelgaza la máscara e invalida la calibración de ancho |
+| Mínimo por largo en vez de por área | Dimensionalmente correcto, pero admite miles de motas: 5 grietas se desploman (una de 1465 a 117 px) y el tiempo ×20 |
+
+Lo que sí funciona es **cambiar la pregunta**. El *black-hat* pregunta *cuánto más oscuro es esto que su entorno*; el filtro de crestas de Frangi pregunta *tiene esto forma de línea*, mirando los dos autovalores del Hessiano: en el centro de una fisura la curvatura es fuerte cruzándola y casi nula a lo largo, y la textura no tiene esa asimetría aunque sea igual de oscura. Con corte en 0.05 entran **los 32 puntos de la grieta encendiendo el 10.8 % de la imagen** en vez del 30 %.
+
+Pero solo, **mide el canto de la pared**: un canto entre dos planos también es una línea larga, oscura y de un solo trazo, y es más larga y más recta que la grieta. La diferencia no es geométrica sino física — un canto separa dos superficies con luz distinta; una fisura es un surco sobre una sola superficie — y se mide como el salto de gris entre los dos lados del trazo:
+
+| | Salto de fondo |
+|---|---|
+| Canto de la pared | **17.5** niveles de gris |
+| Fisura | **2.5** niveles de gris |
+
+Con el límite en 8 desaparecen el canto, los bordes de panel y la sombra del propio marcador de escala.
+
+Queda una última decisión, y es la que evita cambiar un fallo por otro: **cuál de los dos detectores usar**. Comprobado sobre las 30 fotografías propias más la del usuario, no hay ganador: el de crestas recupera fisuras finas que Otsu funde con la textura —en dos fotos Otsu no encontraba nada y éste las mide—, pero sobre pared lisa y bien iluminada Otsu sigue el trazo más lejos. **Se miden las dos y se conserva el recorrido más largo que además sea verosímil.** Así ninguno puede empeorar al otro:
+
+| | Otsu solo | Los dos |
+|---|---|---|
+| Mediana del recorrido | 623 px | **945 px** |
+| Fotos sin medición | 2 de 31 | **0** |
+| Fotos que empeoran | — | **0** |
+| Fotos que mejoran | — | **12** |
+
+En la fotografía que lo destapó, de 114 a 612 px: de 42 mm a 222 mm. El coste es medir dos veces, 632 ms por fotografía, dentro del rango que ya tenía.
+
 ---
 
 #### La escala: meter la referencia en la escena
@@ -1255,17 +1302,25 @@ Un teléfono que «mejora» la foto puede estar borrando la grieta.
 
 El sistema responde «hay grieta / no hay grieta». La realidad estructural es un continuo: microfisuración superficial, fisura de retracción, fisura activa, grieta pasante. Estas categorías tienen implicaciones muy distintas y el sistema no las distingue.
 
-### 5.6 Las probabilidades no están calibradas
+### 5.6 El recorrido medido es una cota inferior
+
+Sobre una fotografía del equipo con una grieta que recorre los 1600 px de alto, el sistema medía **42 mm de los más de 500 que tiene**. Tras el trabajo de §4.10 mide **222 mm**, y lo que falta ya no es un defecto de la segmentación sino el límite de la región: **el clasificador sólo señala el 45 % superior de la foto**. Abajo la grieta es de 1–2 px y, al reducir la ventana de 480 px a los 160 que pide el modelo, desaparece — esas ventanas puntúan **0.036**. La región activa se detiene donde el clasificador deja de ver, que es lo correcto: no se puede medir lo que no se ha detectado.
+
+Eso deja una regla de lectura que la interfaz debería dejar más clara de lo que la deja: **el recorrido es una cota inferior**. La grieta mide *al menos* eso. El ancho, en cambio, no depende de que se haya recorrido la fisura entera —se mide punto a punto sobre el tramo aislado— y es la magnitud que gobierna el veredicto de riesgo.
+
+Cerrar el hueco restante exige que el clasificador vea la fisura fina, y eso es un problema de entrenamiento (fotografías de grietas capilares, o ventanas más pequeñas a cambio de más cómputo), no de medición.
+
+### 5.7 Las probabilidades no están calibradas
 
 19 de las 30 fotografías con grieta obtienen exactamente **1.0** (§4.7). Con agregación por máximo sobre 24 ventanas basta con que una esté segura para saturar el resultado. Las probabilidades sirven para **ordenar** casos, no para leerse como grados de confianza: un 100 % significa «muy por encima del umbral», no «certeza». La interfaz las muestra tal cual, y esa es una limitación real de cara a un usuario no técnico.
 
-### 5.7 El módulo de riesgo no ha sido validado por un ingeniero
+### 5.8 El módulo de riesgo no ha sido validado por un ingeniero
 
 Los umbrales de `config.yaml` se apoyan en criterios de la NSR-10 y en la práctica de inspección visual post-sismo, pero **no han sido revisados ni avalados por un ingeniero estructural matriculado**. Son una propuesta razonada, no un criterio profesional validado.
 
 El diseño mitiga esto tanto como se puede: los umbrales están fuera del código y cada regla cita el criterio que la motiva, de modo que un profesional puede revisarlos y recalibrarlos en minutos. Pero mientras esa revisión no ocurra, es una limitación abierta y debe presentarse como tal.
 
-### 5.8 El conjunto de fotos propias es pequeño
+### 5.9 El conjunto de fotos propias es pequeño
 
 Con 60 imágenes, los intervalos de confianza de las métricas siguen siendo anchos. La mejora de §4.6 (F1 0.8889 → 0.9508) equivale a detectar 5 grietas más: la dirección es clara y el mecanismo está explicado por una medición independiente —el factor de reducción—, pero la magnitud exacta no debe leerse con tres decimales. Sirve para detectar **fallos gruesos** de generalización, no para estimar el desempeño con precisión.
 
@@ -1352,7 +1407,7 @@ En orden de impacto esperado sobre la utilidad real del sistema:
 4. **Incorporar negativos difíciles**: juntas de dilatación, cables, manchas de humedad, marcas de encofrado. Es lo que más reduciría las falsas alarmas en campo, y §4.6 sube su prioridad: con agregación por máximo sobre 24 ventanas, cada falso positivo del modelo tiene 24 oportunidades de manifestarse.
 5. **Segmentación aprendida en vez de morfológica**: §4.10 extrae la geometría con visión clásica, que funciona pero necesita guardarraíles para no confundir la textura del pañete con una fisura. Una U-Net ligera lo haría mejor — a cambio de máscaras etiquetadas píxel a píxel, que no existen en ningún conjunto público de este dominio y que el equipo no puede producir con garantías. Ese es el coste real de la mejora, y es alto.
 6. ~~**Referencia métrica**~~ — **hecho** (§4.10). Era, como decía esta lista, la mejora de mayor relación valor/esfuerzo: una impresora y un marcador convirtieron la limitación más grave del proyecto en una medida con su incertidumbre declarada. Lo que queda abierto es corregir la perspectiva cuando el marcador y la grieta no están en el mismo plano, que hoy solo se advierte.
-7. **Validación con un ingeniero estructural**: revisar y recalibrar los umbrales del motor de reglas. Convertiría §5.7 de limitación abierta en criterio avalado.
+7. **Validación con un ingeniero estructural**: revisar y recalibrar los umbrales del motor de reglas. Convertiría §5.8 de limitación abierta en criterio avalado.
 8. **Aplicación móvil nativa** con el `.tflite` int8 ya exportado, para inspección en campo sin conectividad.
 9. **Estimación de incertidumbre** (*Monte Carlo dropout* o *deep ensembles*), para que el sistema pueda decir «no lo sé» en lugar de emitir una probabilidad sobre una imagen fuera de distribución.
 

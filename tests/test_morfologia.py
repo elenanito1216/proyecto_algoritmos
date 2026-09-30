@@ -27,12 +27,14 @@ cv2 = pytest.importorskip("cv2")
 
 from src.vision.morfologia import (  # noqa: E402
     MedidasGrieta,
+    _salto_de_fondo,
     anotar_medidas,
     camino_principal,
     clasificar_forma,
     esqueletizar,
     medir_grieta,
     podar_espolones,
+    respuesta_de_cresta,
     segmentar_grieta,
 )
 
@@ -433,3 +435,86 @@ def test_descarta_una_malla_de_textura_y_se_queda_con_la_grieta():
     xs = np.where(mascara.any(axis=0))[0]
     assert len(xs) > 0, "no se aislo nada"
     assert xs.max() < 200, "se midio la malla de textura en vez de la fisura"
+
+
+def test_una_nube_de_trocitos_de_textura_no_le_gana_a_la_fisura():
+    # ESTE ES EL FALLO QUE MOTIVO LA PUNTUACION POR RASGOS. La textura no se cuela
+    # como una mancha ancha -esa la caza el filtro de maraña- sino como decenas de
+    # trocitos finos y palidos que, cosidos, suman mas AREA que la fisura. Sobre la
+    # foto que lo destapo, la textura sumaba 5319 px y la grieta 546: por area, la
+    # pared ganaba siempre. Gana quien es largo, oscuro y de un solo trazo.
+    generador = np.random.default_rng(7)
+    imagen = _pared(lado=420)
+    cv2.line(imagen, (360, 30), (360, 390), (30, 30, 30), 3)  # la fisura: fina y oscura
+    for _ in range(45):  # nube de trocitos palidos repartidos por media pared
+        x, y = int(generador.integers(40, 240)), int(generador.integers(40, 380))
+        largo, angulo = int(generador.integers(18, 34)), float(generador.uniform(0, np.pi))
+        fin = (x + int(largo * np.cos(angulo)), y + int(largo * np.sin(angulo)))
+        cv2.line(imagen, (x, y), fin, (120, 120, 120), 4)
+
+    mascara, _, _ = segmentar_grieta(imagen, CONFIG)
+    xs = np.where(mascara.any(axis=0))[0]
+    assert len(xs) > 0, "no se aislo nada"
+    assert xs.min() > 300, "se midio la textura de la pared en vez de la fisura"
+
+
+# ---------------------------------------------------------------------------
+# Deteccion por forma de cresta
+#
+# El black-hat pregunta "cuanto mas oscuro es esto que su entorno" y sobre un
+# pañete rugoso eso enciende media pared. Estas pruebas fijan lo que aporta el
+# filtro de crestas y, sobre todo, el filtro que lo hace utilizable: sin el,
+# mide el canto de la pared en vez de la fisura.
+# ---------------------------------------------------------------------------
+
+
+def test_la_cresta_responde_a_una_linea_y_no_a_una_mancha():
+    linea = np.full((200, 200), 200, np.uint8)
+    cv2.line(linea, (100, 20), (100, 180), 40, 3)
+    mancha = np.full((200, 200), 200, np.uint8)
+    cv2.circle(mancha, (100, 100), 40, 40, -1)
+
+    assert respuesta_de_cresta(linea).max() > 0.5
+    # En una mancha solo responde el borde; el centro, que es lo que se mediria,
+    # queda mudo. Se comprueba ahi y no en el maximo global.
+    assert respuesta_de_cresta(mancha)[90:110, 90:110].max() < 0.2
+
+
+def test_la_cresta_ignora_una_linea_clara_sobre_fondo_oscuro():
+    # Una junta de mortero clara no es una fisura: el signo de la curvatura la
+    # distingue, y sin esa comprobacion se medirian las dos. Se comprueba sobre
+    # el EJE de la linea: a los lados de una linea clara el fondo forma dos
+    # valles que si responden, y eso es correcto -son oscuros y alargados-, pero
+    # el trazo claro en si mismo no debe detectarse.
+    imagen = np.full((200, 200), 60, np.uint8)
+    cv2.line(imagen, (100, 20), (100, 180), 220, 3)
+    assert respuesta_de_cresta(imagen)[20:180, 99:102].max() == 0.0
+
+
+def test_el_canto_entre_dos_paredes_se_distingue_de_una_fisura():
+    # ESTE ES EL FALLO QUE MOTIVO EL FILTRO. Por forma son iguales, y el canto es
+    # incluso mas largo y mas recto: el detector de crestas medía el canto.
+    # Lo que los separa es que el canto cambia el fondo al cruzarlo.
+    canto = np.full((200, 200), 200, np.uint8)
+    canto[:, 100:] = 160  # dos superficies con luz distinta
+    cv2.line(canto, (100, 0), (100, 199), 40, 3)
+    fisura = np.full((200, 200), 200, np.uint8)
+    cv2.line(fisura, (100, 0), (100, 199), 40, 3)
+
+    trazo = np.zeros((200, 200), np.uint8)
+    cv2.line(trazo, (100, 0), (100, 199), 255, 3)
+
+    assert _salto_de_fondo(canto, trazo) > 20
+    assert _salto_de_fondo(fisura, trazo) < 5
+
+
+def test_medir_se_queda_con_el_recorrido_mas_largo_de_los_dos_detectores():
+    # Los dos detectores se turnan segun la pared. Medir con ambos y quedarse con
+    # el mas largo que sea verosimil garantiza que ninguno empeore al otro:
+    # sobre las 30 fotos propias, 12 mejoran y ninguna baja.
+    imagen = _con_grieta([(60, 40), (60, 280)])
+    con_ambos = medir_grieta(imagen, CONFIG)
+    solo_otsu = medir_grieta(
+        imagen, {"medicion": {**CONFIG["medicion"], "cresta": {"activo": False}}}
+    )
+    assert con_ambos.longitud_px >= solo_otsu.longitud_px

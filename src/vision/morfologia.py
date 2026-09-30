@@ -148,6 +148,117 @@ class MedidasGrieta:
         )
 
 
+def respuesta_de_cresta(
+    gris: np.ndarray, escalas: tuple[float, ...] = (1.0, 2.0, 3.0), beta: float = 0.5
+) -> np.ndarray:
+    """Mide cuanto se parece cada pixel al centro de una linea oscura.
+
+    Por que hace falta ademas del black-hat
+    ---------------------------------------
+    El black-hat pregunta *cuanto mas oscuro es este pixel que su entorno*, y
+    sobre un pañete rugoso la respuesta es "bastante" en media pared: la grieta
+    aparece, pero pegada a toda la textura, en un solo componente de 443 424 px
+    que despues hay que tirar entero. Medido sobre la fotografia del equipo, el
+    umbral de Otsu enciende el 30 % de la imagen.
+
+    Este filtro pregunta otra cosa: *tiene este pixel forma de cresta*. Se
+    calcula el Hessiano -las segundas derivadas- a varias escalas y se miran sus
+    dos autovalores. En el centro de una linea oscura, la curvatura es fuerte
+    cruzando la linea y casi nula a lo largo: esa asimetria es la firma, y la
+    textura no la tiene aunque sea igual de oscura. Es el criterio de Frangi,
+    el mismo que se usa para realzar vasos sanguineos en angiografia.
+
+    Sobre la misma fotografia, con corte en 0.05, entran los 32 puntos de la
+    grieta encendiendo el 10.8 % de la imagen en vez del 30 %.
+
+    Args:
+        gris: Imagen en escala de grises, preferiblemente ya ecualizada.
+        escalas: Sigmas del suavizado previo. Cada una responde a lineas de un
+            grosor distinto; se toma el maximo, de modo que una fisura fina y
+            una ancha se detectan igual de bien.
+        beta: Cuanto se penaliza que la estructura sea una mancha en vez de una
+            linea. 0.5 es el valor clasico de Frangi.
+
+    Returns:
+        Respuesta en ``float32`` entre 0 y 1, alta en el centro de las lineas
+        oscuras y ~0 en la textura y en el fondo.
+    """
+    import cv2
+
+    imagen = gris.astype(np.float32)
+    salida = np.zeros_like(imagen)
+    for sigma in escalas:
+        suave = cv2.GaussianBlur(imagen, (0, 0), sigma)
+        # La normalizacion por sigma^2 es lo que hace comparables las escalas:
+        # sin ella, la respuesta decae con el suavizado y siempre ganaria la
+        # escala mas fina, que es la mas ruidosa.
+        factor = sigma**2
+        dxx = cv2.Sobel(suave, cv2.CV_32F, 2, 0, ksize=3) * factor
+        dyy = cv2.Sobel(suave, cv2.CV_32F, 0, 2, ksize=3) * factor
+        dxy = cv2.Sobel(suave, cv2.CV_32F, 1, 1, ksize=3) * factor
+
+        raiz = np.sqrt((dxx - dyy) ** 2 + 4.0 * dxy**2)
+        uno, dos = 0.5 * (dxx + dyy + raiz), 0.5 * (dxx + dyy - raiz)
+        menor = np.where(np.abs(uno) <= np.abs(dos), uno, dos)
+        mayor = np.where(np.abs(uno) <= np.abs(dos), dos, uno)
+
+        manchez = menor**2 / np.maximum(mayor**2, 1e-6)
+        fuerza = np.sqrt(menor**2 + mayor**2)
+        # El corte marca que se considera "estructura fuerte". Se probo fijarlo
+        # en el percentil 99 en vez de en el maximo, por robustez ante un boquete
+        # oscuro que dispara el maximo, y sobre las 31 fotografias el resultado
+        # fue mucho mas inestable: la respuesta se vuelve tan sensible que
+        # enciende bordes y sombras. Se mantiene el maximo, que es ademas lo que
+        # propone Frangi.
+        corte = max(0.5 * float(fuerza.max()), 1e-6)
+        valor = np.exp(-manchez / (2 * beta**2)) * (1.0 - np.exp(-(fuerza**2) / (2 * corte**2)))
+        # mayor <= 0 es una linea CLARA sobre fondo oscuro: no es una fisura.
+        valor[mayor <= 0] = 0.0
+        salida = np.maximum(salida, valor)
+    return salida
+
+
+def _salto_de_fondo(gris: np.ndarray, componente: np.ndarray) -> float:
+    """Mide cuanto cambia el fondo de un lado a otro del trazo.
+
+    Es lo que distingue una fisura de un canto, y hace falta porque por forma no
+    se distinguen: **el canto entre dos paredes tambien es una linea larga,
+    oscura y de un solo trazo**, y ademas mas larga y mas recta que la grieta. El
+    detector de crestas, por si solo, mide el canto y no la fisura.
+
+    La diferencia es fisica, no geometrica. Un canto separa dos superficies que
+    reciben luz distinta, asi que el gris salta al cruzarlo. Una fisura es un
+    surco sobre una unica superficie: a los dos lados esta la misma pared. Medido
+    sobre la fotografia que lo destapo:
+
+        canto de la pared    17.5 niveles de gris
+        fisura                2.5 niveles de gris
+
+    Args:
+        gris: Imagen en escala de grises.
+        componente: Mascara binaria de un solo trazo, del tamano de ``gris``.
+
+    Returns:
+        Valor absoluto de la mediana del salto, en niveles de gris.
+    """
+    vertical = componente.any(axis=1).sum() >= componente.any(axis=0).sum()
+    lienzo = gris if vertical else gris.T
+    trazo = componente if vertical else componente.T
+
+    saltos: list[float] = []
+    filas = np.where(trazo.any(axis=1))[0]
+    for fila in filas[::3]:  # una de cada tres basta y cuesta un tercio
+        puntos = np.where(trazo[fila] > 0)[0]
+        centro = int(puntos.mean())
+        radio = int((puntos.max() - puntos.min()) // 2) + 10
+        if centro - radio - 12 < 0 or centro + radio + 12 >= lienzo.shape[1]:
+            continue  # el trazo toca el borde: no hay fondo que comparar
+        izquierda = float(np.median(lienzo[fila, centro - radio - 12 : centro - radio - 2]))
+        derecha = float(np.median(lienzo[fila, centro + radio + 2 : centro + radio + 12]))
+        saltos.append(derecha - izquierda)
+    return abs(float(np.median(saltos))) if saltos else 0.0
+
+
 def segmentar_grieta(
     imagen_bgr: np.ndarray, config: dict[str, Any]
 ) -> tuple[np.ndarray, np.ndarray, int]:
@@ -195,26 +306,39 @@ def segmentar_grieta(
     )
     realzada = clahe.apply(gris)
 
-    lado = int(cfg.get("kernel_blackhat", 15))
-    lado = lado if lado % 2 == 1 else lado + 1  # los nucleos impares tienen centro
-    nucleo = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (lado, lado))
-    sombrero = cv2.morphologyEx(realzada, cv2.MORPH_BLACKHAT, nucleo)
-
-    # Un desenfoque suave antes de umbralizar evita que el ruido del sensor
-    # genere componentes de uno o dos pixeles que luego hay que descartar.
-    sombrero = cv2.GaussianBlur(sombrero, (3, 3), 0)
-    _, binaria = cv2.threshold(sombrero, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    cresta = obtener(config, "medicion.cresta", {}) or {}
+    if cresta.get("activo", True):
+        escalas = tuple(float(e) for e in cresta.get("escalas", (1.0, 2.0, 3.0)))
+        respuesta = respuesta_de_cresta(realzada, escalas)
+        umbral = float(cresta.get("umbral", 0.05))
+        binaria = (respuesta >= umbral).astype(np.uint8) * 255
+        sombrero = (respuesta * 255).astype(np.uint8)
+    else:
+        lado = int(cfg.get("kernel_blackhat", 15))
+        lado = lado if lado % 2 == 1 else lado + 1  # los nucleos impares tienen centro
+        nucleo = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (lado, lado))
+        sombrero = cv2.morphologyEx(realzada, cv2.MORPH_BLACKHAT, nucleo)
+        # Un desenfoque suave antes de umbralizar evita que el ruido del sensor
+        # genere componentes de uno o dos pixeles que luego hay que descartar.
+        sombrero = cv2.GaussianBlur(sombrero, (3, 3), 0)
+        _, binaria = cv2.threshold(sombrero, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     limpieza = int(cfg.get("kernel_limpieza", 3))
     nucleo_limpieza = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (limpieza,) * 2)
     binaria = cv2.morphologyEx(binaria, cv2.MORPH_OPEN, nucleo_limpieza)
     binaria = cv2.morphologyEx(binaria, cv2.MORPH_CLOSE, nucleo_limpieza)
 
-    return _quedarse_con_la_fisura(binaria, config)
+    # Se pasan ademas de la mascara: la respuesta dice CUANTO destaca cada pixel,
+    # no solo si supero el umbral, y el gris hace falta para distinguir una
+    # fisura de un canto, que por forma son iguales.
+    return _quedarse_con_la_fisura(binaria, config, sombrero, gris)
 
 
 def _quedarse_con_la_fisura(
-    binaria: np.ndarray, config: dict[str, Any]
+    binaria: np.ndarray,
+    config: dict[str, Any],
+    respuesta: np.ndarray | None = None,
+    gris: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Descarta los componentes que no pueden ser una grieta.
 
@@ -234,6 +358,11 @@ def _quedarse_con_la_fisura(
     Args:
         binaria: Mascara binaria de entrada.
         config: Configuracion del proyecto.
+        respuesta: Imagen de respuesta del detector, para medir cuanto destaca
+            cada candidato sobre el fondo. Opcional: sin ella la eleccion se
+            hace solo por geometria.
+        gris: Imagen en escala de grises, para rechazar cantos por el salto de
+            fondo. Opcional: sin ella no se aplica ese filtro.
 
     Returns:
         Tupla ``(mascara, descartados)`` con un unico componente y el numero de
@@ -243,12 +372,23 @@ def _quedarse_con_la_fisura(
 
     cfg = obtener(config, "medicion", {}) or {}
     alto, ancho = binaria.shape[:2]
+    # El minimo se mide en AREA y escala con el tamano de la imagen. Es discutible
+    # -una grieta es una linea, y su area crece con su longitud, no con la
+    # superficie de la foto- y de hecho descarta trozos finos de fisura real:
+    # en una foto de 1200x1600 exige 960 px, o sea 320 px de recorrido seguido
+    # para un trazo de 3 px. Se probo sustituirlo por un minimo de LARGO y el
+    # resultado fue peor, medido sobre las 31 fotografias: admite miles de motas
+    # de textura que compiten con la fisura, cinco grietas bien medidas se
+    # desplomaron -uno de 1465 a 117 px- y el tiempo se multiplico por veinte.
+    # Lo que hace falta ahi no es otro umbral de tamano sino separar la fisura de
+    # la textura antes de filtrar (§5.5).
     area_minima = max(
         int(float(cfg.get("area_minima_relativa", 0.0005)) * alto * ancho),
         int(cfg.get("area_minima_absoluta", 30)),
     )
     elongacion_minima = float(cfg.get("elongacion_minima", 2.0))
     marana_maxima = float(cfg.get("marana_maxima", 5.0))
+    salto_maximo = float((obtener(config, "medicion.cresta", {}) or {}).get("salto_maximo", 8.0))
 
     n, etiquetas, stats, _ = cv2.connectedComponentsWithStats(binaria, connectivity=8)
     # Se calcula una sola vez: da el ancho local en cada punto, que hace falta
@@ -261,13 +401,24 @@ def _quedarse_con_la_fisura(
         if area < area_minima:
             continue
 
+        # Cada componente se examina dentro de su propia caja y no sobre la
+        # imagen entera. Con el minimo por area, los componentes eran decenas;
+        # con el minimo por largo son miles, y recorrer la imagen completa una
+        # vez por cada uno multiplicaba el tiempo por cinco.
+        x0 = int(stats[indice, cv2.CC_STAT_LEFT])
+        y0 = int(stats[indice, cv2.CC_STAT_TOP])
+        x1 = x0 + int(stats[indice, cv2.CC_STAT_WIDTH])
+        y1 = y0 + int(stats[indice, cv2.CC_STAT_HEIGHT])
+        recorte_etiquetas = etiquetas[y0:y1, x0:x1]
+        recorte_distancias = distancias[y0:y1, x0:x1]
+
         # La elongacion se mide sobre la caja MINIMA ROTADA, no sobre la caja
         # alineada con los ejes, y la diferencia no es un matiz: una grieta
         # diagonal tiene una caja alineada practicamente cuadrada, de modo que
         # un filtro sobre ella la rechazaria por "compacta". Serian justamente
         # las fisuras diagonales -las que §4.4 identifica como estructuralmente
         # significativas en columnas- las que el sistema dejaria de medir.
-        componente = (etiquetas == indice).astype(np.uint8)
+        componente = (recorte_etiquetas == indice).astype(np.uint8)
         contornos, _ = cv2.findContours(componente, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contornos:
             continue
@@ -295,10 +446,19 @@ def _quedarse_con_la_fisura(
         #
         # El cociente no depende del tamano ni de la orientacion, que es lo que
         # lo hace utilizable sin recalibrar en cada fotografia.
-        ancho_medio = 2.0 * float(distancias[componente > 0].mean())
-        esbeltez = area / max(lado_mayor * ancho_medio, 1.0)
+        ancho_medio = 2.0 * float(recorte_distancias[componente > 0].mean())
+        esbeltez = _factor_marana(area, lado_mayor, ancho_medio)
         if esbeltez > marana_maxima:
             continue
+
+        # Filtro de CANTO. Por forma, una fisura y el canto entre dos paredes
+        # son la misma cosa; lo que los separa es que el canto cambia el fondo
+        # al cruzarlo y la fisura no (ver _salto_de_fondo).
+        if gris is not None and salto_maximo > 0:
+            entero = np.zeros(binaria.shape[:2], np.uint8)
+            entero[y0:y1, x0:x1] = componente
+            if _salto_de_fondo(gris, entero) > salto_maximo:
+                continue
 
         candidatos.append((lado_mayor, indice))
 
@@ -306,7 +466,7 @@ def _quedarse_con_la_fisura(
     if not candidatos:
         return salida, np.zeros_like(binaria), 0
 
-    return _unir_fragmentos(etiquetas, stats, candidatos, config)
+    return _unir_fragmentos(etiquetas, stats, candidatos, config, respuesta)
 
 
 def _unir_fragmentos(
@@ -314,6 +474,7 @@ def _unir_fragmentos(
     stats: np.ndarray,
     candidatos: list[tuple[float, int]],
     config: dict[str, Any],
+    respuesta: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Reune los trozos en que la segmentacion parte una misma grieta.
 
@@ -356,6 +517,7 @@ def _unir_fragmentos(
         stats: Estadisticas de cada componente.
         candidatos: Lista ``(lado_mayor, indice)`` que paso los filtros.
         config: Configuracion del proyecto.
+        respuesta: Imagen del black-hat, para elegir el grupo por contraste.
 
     Returns:
         Tupla ``(mascara, puentes, descartados)``. La mascara lleva los pixeles
@@ -383,22 +545,118 @@ def _unir_fragmentos(
     dilatada = cv2.dilate(mascara_candidatos, nucleo)
     _, grupos = cv2.connectedComponents(dilatada, connectivity=8)
 
-    # De cada fragmento se toma un pixel para saber en que grupo cayo, y se suma
-    # el area ORIGINAL de cada grupo: el grupo ganador es el que mas fisura
-    # contiene, no el que mas se dilato.
+    # De cada fragmento se toma un pixel para saber en que grupo cayo.
     por_grupo: dict[int, list[int]] = {}
     for indice in indices:
         ys, xs = np.where(etiquetas == indice)
         por_grupo.setdefault(int(grupos[ys[0], xs[0]]), []).append(indice)
 
-    mejor_grupo = max(
-        por_grupo.values(),
-        key=lambda miembros: sum(int(stats[i, cv2.CC_STAT_AREA]) for i in miembros),
-    )
+    mejor_grupo = _elegir_grupo(list(por_grupo.values()), etiquetas, stats, config, respuesta)
 
     mascara = np.isin(etiquetas, mejor_grupo).astype(np.uint8) * 255
     puentes = _coser_fragmentos(etiquetas, mejor_grupo, mascara.shape)
     return mascara, puentes, len(candidatos) - len(mejor_grupo)
+
+
+def _factor_marana(area: float, lado_mayor: float, ancho_medio: float) -> float:
+    """Calcula cuanto se aleja un trazo de ser una linea.
+
+    Una linea cumple ``area = largo x ancho``, de modo que el cociente vale ~1.
+    Una red de textura rellena una superficie y el cociente se dispara.
+
+    Args:
+        area: Pixeles encendidos.
+        lado_mayor: Lado mayor de la caja minima rotada.
+        ancho_medio: Ancho local medio, del mapa de distancias.
+
+    Returns:
+        El cociente, sin unidades.
+    """
+    return float(area) / max(float(lado_mayor) * float(ancho_medio), 1.0)
+
+
+def _elegir_grupo(
+    grupos: list[list[int]],
+    etiquetas: np.ndarray,
+    stats: np.ndarray,
+    config: dict[str, Any],
+    respuesta: np.ndarray | None,
+) -> list[int]:
+    """Elige que grupo de fragmentos se mide.
+
+    Por que no vale el area
+    -----------------------
+    La version anterior se quedaba con el grupo que mas area sumaba, y sobre un
+    muro de panete eso elige la textura. Medido sobre la fotografia que destapo
+    el fallo, con la grieta y la pared compitiendo dentro de la misma region:
+
+        grupo   area   recorrido   marana   contraste   que es
+          5     5319       ~300     6.20       54.2     textura del panete  <- ganaba
+          4      794       93.3     2.61       54.4     mancha de textura
+          1      714      129.3     1.66       62.9     churrete de pintura
+          2      546      111.4     1.61       67.4     LA GRIETA
+
+    La grieta es el trazo mas fino de todos: por area pierde contra cualquier
+    mancha, y pierde mas cuanto mas limpia sea la fisura. El area mide cuanta
+    tinta hay, no cuanta fisura.
+
+    Los tres rasgos, y por que hacen falta los tres
+    -----------------------------------------------
+    Una fisura es **larga, oscura y de un solo trazo**. Cada rasgo por separado
+    se deja enganar, y esta comprobado sobre las 30 fotografias propias mas esta:
+
+    - **Solo contraste**: acierta aqui, pero en otras dos abandona una grieta de
+      1465 px para irse a una mota oscura de veinte.
+    - **Solo recorrido**: la mancha de textura tambien es larga, y gana.
+    - **Descartar por marana**: no hay corte posible. La textura de aqui da 6.20,
+      pero una grieta autentica y ramificada de otra foto da 5.13.
+
+    Se combinan **normalizando los tres dentro de la propia fotografia** y
+    sumando. La normalizacion importa: el contraste del black-hat vale ~60 en una
+    imagen y ~10 en otra segun la luz, asi que solo tiene sentido comparado con
+    los demas trazos de esa misma foto. Sumar en vez de multiplicar evita que un
+    rasgo alto tape a los otros dos, que es justo lo que dejaba ganar al churrete
+    de pintura por un 5%.
+
+    Resultado sobre las 31 fotografias: elige lo mismo que el area en 24, mejor
+    en 4 -incluida esta- y algo mas corto sobre la misma grieta en 1, revisadas
+    una a una sobre la imagen.
+
+    Args:
+        grupos: Listas de indices de componente, un elemento por grupo.
+        etiquetas: Matriz de etiquetas de componentes conexos.
+        stats: Estadisticas de cada componente.
+        config: Configuracion del proyecto.
+        respuesta: Imagen del black-hat. Sin ella no hay medida de contraste y se
+            decide por area, como antes.
+
+    Returns:
+        Los indices del grupo elegido.
+    """
+    import cv2
+
+    if respuesta is None or len(grupos) == 1:
+        return max(grupos, key=lambda g: sum(int(stats[i, cv2.CC_STAT_AREA]) for i in g))
+
+    rasgos = []
+    for miembros in grupos:
+        mascara = np.isin(etiquetas, miembros).astype(np.uint8)
+        contornos, _ = cv2.findContours(mascara, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contornos:
+            rasgos.append((0.0, 0.0, 0.0))
+            continue
+        (_, _), (ancho, alto), _ = cv2.minAreaRect(np.vstack(contornos))
+        recorrido = max(float(ancho), float(alto))
+        distancias = cv2.distanceTransform(mascara, cv2.DIST_L2, 5)
+        ancho_medio = 2.0 * float(distancias[mascara > 0].mean())
+        marana = _factor_marana(int(mascara.sum()), recorrido, ancho_medio)
+        rasgos.append((recorrido, float(np.median(respuesta[mascara > 0])), 1.0 / max(marana, 1.0)))
+
+    valores = np.array(rasgos, dtype=float)
+    rango = np.ptp(valores, axis=0)
+    rango[rango == 0] = 1.0  # un rasgo igual en todos no desempata
+    puntos = ((valores - valores.min(axis=0)) / rango).sum(axis=1)
+    return grupos[int(np.argmax(puntos))]
 
 
 def _coser_fragmentos(
@@ -987,6 +1245,25 @@ def medir_grieta(
 
     mascara, puentes, fragmentos = segmentar_grieta(imagen, config)
     medidas = _medir_sobre(mascara, puentes, fragmentos, config, escala_mm_por_px)
+
+    # Los dos detectores se turnan segun la pared, y cual gana no se puede saber
+    # de antemano: el de crestas recupera fisuras finas que Otsu funde con la
+    # textura -en dos fotografias del conjunto, Otsu no encontraba nada y este
+    # las mide-, pero sobre una pared lisa y bien iluminada Otsu sigue el trazo
+    # mas lejos. Se miden los dos y se conserva el recorrido mas largo que
+    # ademas sea verosimil; ninguno puede empeorar al otro, solo mejorarlo.
+    if (obtener(config, "medicion.cresta", {}) or {}).get("activo", True):
+        otro = {
+            **config,
+            "medicion": {**(obtener(config, "medicion", {}) or {}), "cresta": {"activo": False}},
+        }
+        m2, p2, f2 = segmentar_grieta(imagen, otro)
+        alterna = _medir_sobre(m2, p2, f2, config, escala_mm_por_px)
+        mejor_alterna = alterna.detectada and _parece_una_fisura(alterna, config) is None
+        peor_actual = not medidas.detectada or _parece_una_fisura(medidas, config) is not None
+        if mejor_alterna and (peor_actual or alterna.longitud_px > medidas.longitud_px):
+            mascara, puentes, fragmentos, medidas = m2, p2, f2, alterna
+
     if not medidas.detectada:
         return medidas
 
