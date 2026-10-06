@@ -384,11 +384,33 @@ Al fotografiar: pega la hoja **junto a la grieta y en su mismo plano**, y sitúa
 
 ### 4. Ejecutar la aplicación
 
-Si los modelos ya están entrenados (hay archivos en la carpeta `models/`), basta con:
+La aplicación necesita los modelos entrenados en la carpeta `models/`. No están dentro del repositorio por su tamaño, pero se publicaron aparte en el [release `v1.0-modelos`](https://github.com/elenanito1216/proyecto_algoritmos/releases/tag/v1.0-modelos), así que **no hace falta entrenar nada**: se descargan en segundos.
+
+**En Windows (PowerShell)**, desde la carpeta raíz del proyecto:
+
+```powershell
+foreach ($f in "mobilenetv2_finetuned.keras","mobilenetv2_int8.tflite","baseline_cnn.keras") { Invoke-WebRequest "https://github.com/elenanito1216/proyecto_algoritmos/releases/download/v1.0-modelos/$f" -OutFile "models\$f" }
+```
+
+**En Linux o macOS**
+
+```bash
+for f in mobilenetv2_finetuned.keras mobilenetv2_int8.tflite baseline_cnn.keras; do curl -L -o "models/$f" "https://github.com/elenanito1216/proyecto_algoritmos/releases/download/v1.0-modelos/$f"; done
+```
+
+| Archivo | Tamaño | Lo usa |
+|---|---|---|
+| `mobilenetv2_finetuned.keras` | 14.6 MB | El modo fotografía |
+| `mobilenetv2_int8.tflite` | 1.8 MB | El modo video en vivo |
+| `baseline_cnn.keras` | 0.4 MB | La evaluación comparativa (`scripts/evaluate.py`) |
+
+Con los modelos en su sitio, se abre la aplicación:
 
 ```bash
 streamlit run app/app.py
 ```
+
+Quien prefiera entrenarlos por su cuenta puede hacerlo con los pasos del apartado siguiente.
 
 ### 5. Reconstruirlo todo desde cero
 
@@ -479,7 +501,7 @@ crack-risk-assessment/
 │   ├── metricas/       ·  cifras en bruto que la aplicación lee
 │   └── figuras/        ·  gráficas
 │
-├── models/             ← modelos entrenados (no se versionan: pesan mucho)
+├── models/             ← modelos entrenados (se descargan del release v1.0-modelos)
 └── data/               ← imágenes (no se versionan)
 ```
 
