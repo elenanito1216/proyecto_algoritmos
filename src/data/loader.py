@@ -87,9 +87,6 @@ class Inventario:
         return pd.DataFrame(datos)
 
 
-# --------------------------------------------------------------------------- #
-# Descubrimiento de la estructura
-# --------------------------------------------------------------------------- #
 
 
 def _normalizar(texto: str) -> str:
@@ -139,7 +136,6 @@ def detectar_estructura(directorio: Path, config: dict[str, Any]) -> str:
     if (directorio / nombre_csv).is_file():
         return "csv"
 
-    # Un unico CSV en la carpeta tambien vale: el nombre exacto es un detalle.
     csvs = list(directorio.glob("*.csv"))
     if len(csvs) == 1:
         return "csv"
@@ -221,7 +217,6 @@ def construir_inventario(
         for subdir in sorted(p for p in raiz.iterdir() if p.is_dir()):
             indice = mapa.get(_normalizar(subdir.name))
             if indice is None:
-                # Carpeta ajena al esquema de clases (p. ej. '.ipynb_checkpoints').
                 continue
             for archivo in sorted(subdir.rglob("*")):
                 if archivo.is_file() and archivo.suffix.lower() in extensiones:
@@ -247,7 +242,6 @@ def construir_inventario(
         for _, fila in tabla.iterrows():
             candidata = raiz / str(fila[col_img])
             if not candidata.is_file():
-                # El CSV puede traer solo el nombre; se busca recursivamente.
                 encontradas = list(raiz.rglob(Path(str(fila[col_img])).name))
                 if not encontradas:
                     continue
@@ -279,9 +273,6 @@ def construir_inventario(
     )
 
 
-# --------------------------------------------------------------------------- #
-# Particion
-# --------------------------------------------------------------------------- #
 
 
 def submuestrear(inventario: Inventario, fraccion: float, semilla: int) -> Inventario:
@@ -378,8 +369,6 @@ def dividir(
     indices = np.arange(len(inventario))
 
     if inventario.grupos is not None:
-        # Particion por grupos: primero se aparta (val + test), luego se parte
-        # ese resto en dos respetando de nuevo los grupos.
         gss1 = GroupShuffleSplit(n_splits=1, test_size=fr_val + fr_test, random_state=semilla)
         idx_train, idx_resto = next(gss1.split(indices, inventario.etiquetas, inventario.grupos))
 
@@ -403,22 +392,6 @@ def dividir(
             stratify=inventario.etiquetas[idx_resto],
         )
 
-    # Se mezcla el ORDEN de cada particion con una permutacion sembrada, en vez
-    # de ordenar los indices.
-    #
-    # Por que esto es critico y no cosmetico: construir_inventario() recorre las
-    # subcarpetas en orden alfabetico, asi que el inventario queda como un bloque
-    # de 'Negative' seguido de un bloque de 'Positive'. Ordenar los indices con
-    # np.sort() reconstruia ese orden por clase dentro de cada particion. Como el
-    # buffer de tf.data (preproceso.barajar_buffer) solo mezcla dentro de una
-    # ventana deslizante, con 40.000 imagenes y un buffer de 2.000 el modelo
-    # recibia ~750 lotes seguidos de una sola clase y luego ~520 de la otra:
-    # jamas veia un lote mezclado, y colapsaba a predecir siempre la ultima clase
-    # que habia visto (val_auc = 0.5).
-    #
-    # Barajar aqui, sobre la lista de rutas, cuesta microsegundos y hace que el
-    # buffer de tf.data solo tenga que aportar variacion entre epocas, que es
-    # para lo que sirve.
     generador_orden = np.random.default_rng(semilla)
 
     def _mezclar(indices: np.ndarray) -> np.ndarray:
@@ -481,9 +454,6 @@ def calcular_pesos_clase(inventario: Inventario) -> dict[int, float]:
     return {int(c): float(w) for c, w in zip(presentes, pesos)}
 
 
-# --------------------------------------------------------------------------- #
-# Pipeline tf.data
-# --------------------------------------------------------------------------- #
 
 
 def construir_capa_degradacion(factor_maximo: float, probabilidad: float) -> Any:
@@ -623,9 +593,6 @@ def construir_capa_aumento(config: dict[str, Any]) -> Any:
     if aum.get("traslacion", 0):
         t = float(aum["traslacion"])
         capas.append(tf.keras.layers.RandomTranslation(t, t, seed=semilla))
-    # La degradacion va ANTES que contraste y brillo, y el orden importa: simula
-    # una camara que capturo la escena a menor resolucion, y los ajustes
-    # fotometricos ocurren sobre lo que la camara entrego, no antes.
     degradacion = aum.get("degradacion_escala", {}) or {}
     if degradacion.get("activo", False):
         capas.append(
@@ -638,7 +605,6 @@ def construir_capa_aumento(config: dict[str, Any]) -> Any:
     if aum.get("contraste", 0):
         capas.append(tf.keras.layers.RandomContrast(float(aum["contraste"]), seed=semilla))
     if aum.get("brillo", 0):
-        # value_range=(0, 1) porque el pipeline entrega tensores ya normalizados.
         capas.append(
             tf.keras.layers.RandomBrightness(
                 float(aum["brillo"]), value_range=(0.0, 1.0), seed=semilla
@@ -665,8 +631,6 @@ def _decodificar(ruta: Any, etiqueta: Any, alto: int, ancho: int, canales: int) 
     import tensorflow as tf
 
     bytes_imagen = tf.io.read_file(ruta)
-    # expand_animations=False evita que un GIF devuelva un tensor 4D y rompa el
-    # resize; decode_image cubre jpg/png/bmp/gif con una sola llamada.
     imagen = tf.io.decode_image(bytes_imagen, channels=canales, expand_animations=False)
     imagen = tf.image.resize(imagen, [alto, ancho], method="bilinear")
     imagen = tf.cast(imagen, tf.float32) / 255.0
@@ -804,18 +768,12 @@ def cargar_particiones(
 
     inventarios = dividir(inventario, config, verboso=verboso)
     datasets = {
-        # train y val se repiten indefinidamente y el script les pasa
-        # steps_per_epoch / validation_steps calculados con pasos_por_epoca().
-        # Es lo que evita el aviso "your input ran out of data" que produce la
-        # cardinalidad desconocida de ignore_errors().
         "train": crear_dataset(
             inventarios["train"], config, entrenamiento=True, batch_size=batch_size
         ),
         "val": crear_dataset(
             inventarios["val"], config, entrenamiento=False, batch_size=batch_size, repetir=True
         ),
-        # test NO se repite: se recorre una sola vez para evaluar, y una
-        # repeticion infinita colgaria el bucle de prediccion.
         "test": crear_dataset(
             inventarios["test"], config, entrenamiento=False, batch_size=batch_size, repetir=False
         ),

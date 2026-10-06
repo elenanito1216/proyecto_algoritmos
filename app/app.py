@@ -83,11 +83,6 @@ ELEMENTOS = {
 }
 
 
-# --------------------------------------------------------------------------- #
-# Carga cacheada
-# --------------------------------------------------------------------------- #
-
-
 @st.cache_data(show_spinner=False)
 def obtener_config() -> dict[str, Any]:
     """Carga ``config.yaml`` una sola vez por sesion.
@@ -114,9 +109,7 @@ def obtener_predictor(formato: str, ruta: str, marca_tiempo: float) -> Predictor
     Returns:
         Predictor listo para inferir.
     """
-    del marca_tiempo  # solo participa en la clave de cache
-    # Para el ensemble, 'ruta' es la concatenacion de sus componentes y solo
-    # sirve de clave: cargar_predictor los lee de config.yaml.
+    del marca_tiempo
     return cargar_predictor(obtener_config(), formato, None if formato == "ensemble" else ruta)
 
 
@@ -262,11 +255,6 @@ def clave_y_marca(config: dict[str, Any], formato: str) -> tuple[str, float]:
     return str(resolver(ruta)), marca_de(ruta)
 
 
-# --------------------------------------------------------------------------- #
-# Utilidades de imagen
-# --------------------------------------------------------------------------- #
-
-
 def leer_imagen_subida(archivo: Any, max_mb: int) -> tuple[np.ndarray | None, str | None]:
     """Convierte el archivo subido en un arreglo RGB, validandolo.
 
@@ -292,7 +280,7 @@ def leer_imagen_subida(archivo: Any, max_mb: int) -> tuple[np.ndarray | None, st
 
     try:
         imagen = Image.open(io.BytesIO(datos))
-        imagen.load()  # fuerza la decodificacion: aqui se detecta un JPEG truncado
+        imagen.load()
         imagen = imagen.convert("RGB")
     except UnidentifiedImageError:
         return None, "El archivo no es una imagen reconocible (¿esta corrupto o renombrado?)."
@@ -332,11 +320,6 @@ def redimensionar_para_vision(imagen_rgb: np.ndarray, lado_maximo: int = 1024) -
     return cv2.resize(imagen_rgb, nuevo, interpolation=cv2.INTER_AREA)
 
 
-# --------------------------------------------------------------------------- #
-# Barra lateral
-# --------------------------------------------------------------------------- #
-
-
 def construir_barra_lateral(config: dict[str, Any]) -> dict[str, Any]:
     """Dibuja la barra lateral y devuelve el estado de todos sus controles.
 
@@ -372,13 +355,6 @@ def construir_barra_lateral(config: dict[str, Any]) -> dict[str, Any]:
         st.divider()
         st.markdown("### 🧠 Modelo")
 
-        # No hay selector de modelo, y esa ausencia es una decision, no una
-        # simplificacion. Foto y video imponen restricciones opuestas: analizar
-        # una fotografia admite un segundo de calculo y exige el maximo recall;
-        # el video tiene 33 ms por fotograma y no admite ninguno. Un unico modelo
-        # no puede ser el mejor en ambos, y pedirle al usuario que elija seria
-        # trasladarle una decision que la aplicacion puede tomar mejor: la
-        # respuesta correcta esta medida en el informe, no depende de su gusto.
         disponibles = artefactos_disponibles(config)
         estado["formato"] = elegir_modelo(config, "foto", disponibles)
         estado["formato_video"] = elegir_modelo(config, "video", disponibles)
@@ -514,8 +490,6 @@ def construir_barra_lateral(config: dict[str, Any]) -> dict[str, Any]:
         )
 
         if st.button("↺ Restaurar valores de config.yaml", use_container_width=True):
-            # Limpiar el estado de los sliders obliga a Streamlit a releer sus
-            # valores por defecto, que provienen del YAML.
             for clave in list(st.session_state.keys()):
                 del st.session_state[clave]
             st.rerun()
@@ -557,11 +531,6 @@ def panel_info_modelo(predictor: Predictor) -> None:
             f'<div class="cra-tarjeta"><h4>Ficha del modelo</h4>{"".join(filas)}</div>',
             unsafe_allow_html=True,
         )
-
-
-# --------------------------------------------------------------------------- #
-# Pestana 1: analisis en vivo
-# --------------------------------------------------------------------------- #
 
 
 def _conviene_trocear(imagen_rgb: np.ndarray, config: dict[str, Any]) -> bool:
@@ -662,20 +631,11 @@ def ejecutar_pipeline(
     barra = st.progress(0.0, text=f"1/6 · {etapas[0]}")
     inicio_total = time.perf_counter()
 
-    # Etapa 1-2: carga y preprocesado geometrico para el modulo clasico.
     imagen_vision = redimensionar_para_vision(imagen_rgb)
     imagen_bgr = cv2.cvtColor(imagen_vision, cv2.COLOR_RGB2BGR)
-    # La medicion necesita la imagen SIN redimensionar: el recorte a 1024 px que
-    # usa la inclinometria ya cambiaria la escala y los anchos en pixeles dejarian
-    # de corresponder con los milimetros que calcula el marcador.
     imagen_bgr_completa = cv2.cvtColor(np.asarray(imagen_rgb), cv2.COLOR_RGB2BGR)
     barra.progress(0.2, text=f"2/6 · {etapas[1]}")
 
-    # Etapa 3: clasificacion.
-    #
-    # Se hace sobre la imagen ENTERA, no sobre 'imagen_vision': el redimensionado
-    # a 1024 px que necesita OpenCV ya destruiria parte de la evidencia fina que
-    # el analisis por mosaicos pretende rescatar.
     mosaicos = None
     if controles.get("mosaicos") and _conviene_trocear(imagen_rgb, config):
         mosaicos = predecir_por_mosaicos(
@@ -687,7 +647,6 @@ def ejecutar_pipeline(
         probabilidad, ms_inferencia = predictor.predecir_imagen(imagen_rgb, config)
     barra.progress(0.4, text=f"3/6 · {etapas[2]}")
 
-    # Etapa 4: inclinometria y orientacion de la grieta.
     inclinacion = estimar_inclinacion(
         imagen_bgr,
         config,
@@ -708,11 +667,6 @@ def ejecutar_pipeline(
     )
     barra.progress(0.7, text=f"4/6 · {etapas[3]}")
 
-    # Etapa 5: geometria de la fisura.
-    #
-    # Se mide sobre la REGION ACTIVA de los mosaicos, no sobre una ventana suelta
-    # ni sobre la imagen entera: la ventana trunca la grieta y la imagen entera
-    # deja que la textura de otras zonas compita con ella (§4.6).
     medidas = referencia = mascara = puentes = None
     region = None
     if (
@@ -727,7 +681,6 @@ def ejecutar_pipeline(
         medidas = medir_grieta(recorte, config, escala_mm_por_px=referencia.mm_por_px)
         mascara, puentes, _ = segmentar_grieta(recorte, config)
 
-    # Etapa 6: motor de reglas.
     evaluacion = evaluar_riesgo(
         probabilidad_grieta=probabilidad,
         config=config,
@@ -863,21 +816,11 @@ def _metricas_de_fisura(
             ("Forma", forma[0], "", forma[1]),
         ]
 
-    # Por debajo de 10 cm el recorrido se lee mejor en milimetros.
     largo_cm = medidas.longitud_mm / 10.0
     recorrido = (
         (f"{largo_cm:.1f}", "cm") if largo_cm >= 10.0 else (f"{medidas.longitud_mm:.0f}", "mm")
     )
 
-    # Un ancho en milimetros sin su incertidumbre invita a leerlo con una
-    # precision que no tiene. La segmentacion acierta el borde de la fisura con
-    # un margen de un pixel, asi que la incertidumbre en milimetros es
-    # exactamente lo que mide un pixel a esa escala.
-    #
-    # Esto no es un detalle: la MISMA pared medida a 1280x720 y a 640x480 dio
-    # 3.46 mm y 7.97 mm de ancho maximo. No es que una de las dos se equivoque
-    # mas de lo previsto -es que a 640x480 un pixel vale medio milimetro y la
-    # cifra no puede ser mejor que eso. Mostrarlo lo hace evidente.
     incertidumbre = float(medidas.escala_mm_por_px or 0.0)
 
     return [
@@ -989,7 +932,6 @@ def _panel_medidas(resultado: dict[str, Any], config: dict[str, Any]) -> None:
     if medidas.union_rechazada:
         st.info(f"**Se midió solo el tramo principal.** {medidas.union_rechazada}")
 
-    # --- Estado de la escala ------------------------------------------------
     if not hay_escala:
         st.warning(
             "**Las medidas están en píxeles, no en milímetros.** "
@@ -1087,11 +1029,9 @@ def pestana_analisis(
     evaluacion = resultado["evaluacion"]
     umbral = float(obtener(config, "riesgo.umbral_grieta", 0.5))
 
-    # --- Semaforo de riesgo -------------------------------------------------
     st.markdown(estilos.semaforo(evaluacion.nivel, evaluacion.resumen), unsafe_allow_html=True)
     st.write("")
 
-    # --- Metricas principales ----------------------------------------------
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         hay_grieta = resultado["probabilidad"] >= umbral
@@ -1151,19 +1091,12 @@ def pestana_analisis(
     )
     st.write("")
 
-    # --- Localizacion por mosaicos -----------------------------------------
     if mosaicos is not None:
         _panel_mosaicos(resultado["imagen_rgb"], mosaicos, umbral)
 
-    # --- Medidas de la fisura ----------------------------------------------
     if resultado.get("medidas") is not None:
         _panel_medidas(resultado, config)
 
-    # --- Las vistas, en pestanas -------------------------------------------
-    #
-    # Apiladas una debajo de otra obligaban a recorrer la pagina entera para
-    # compararlas, y con la medicion son cuatro. En pestanas ocupan el mismo
-    # sitio y se alternan sin perder el punto de vista.
     st.markdown("#### Vistas de la imagen")
     nombres = ["Original", "Canny + Hough"]
     if resultado.get("medidas") is not None and resultado["medidas"].detectada:
@@ -1171,8 +1104,6 @@ def pestana_analisis(
     vistas = st.tabs(nombres)
 
     with vistas[nombres.index("Original")]:
-        # use_column_width (no use_container_width): es el parametro que expone
-        # st.image en Streamlit 1.39.
         st.image(resultado["imagen_vision"], use_column_width=True)
         st.caption("La fotografía tal como se cargó, reducida solo para mostrarla.")
 
@@ -1182,13 +1113,6 @@ def pestana_analisis(
 
     with vistas[nombres.index("Canny + Hough")]:
         st.image(resultado["imagen_anotada"], use_column_width=True)
-        # El desglose refleja exactamente lo que dibuja anotar_imagen():
-        #   verde = lineas coherentes (== confianza), las que sustentan el angulo
-        #   gris  = las que fallaron el filtro de verticalidad
-        #   ni una cosa ni la otra = pasaron la verticalidad pero se alejaban de
-        #                            la mediana; esas NO se dibujan
-        # Reportar aqui n_lineas_validas como "verdes" daria un numero mayor que
-        # las lineas verdes realmente visibles.
         tolerancia = float(obtener(config, "inclinacion.tolerancia_vertical_grados", 35.0))
         grises = inclinacion.n_lineas_detectadas - inclinacion.n_lineas_validas
         incoherentes = inclinacion.n_lineas_validas - inclinacion.confianza
@@ -1209,8 +1133,6 @@ def pestana_analisis(
         st.caption(detalle)
 
     if inclinacion.motivo_rechazo:
-        # Un guardarrail descarto la medida: no es que falten lineas, es que las
-        # que hay describen algo que no puede ser el eje de un elemento en pie.
         st.error(
             f"**Medida de desaplome descartada por inverosimil.** "
             f"{inclinacion.motivo_rechazo}\n\n"
@@ -1223,7 +1145,6 @@ def pestana_analisis(
 
     st.write("")
 
-    # --- Reglas disparadas --------------------------------------------------
     st.markdown("#### Reglas que determinaron el nivel de riesgo")
     st.caption(
         "El nivel es la maxima severidad entre las reglas activas. Cada regla cita el "
@@ -1278,7 +1199,7 @@ def bloque_comparar_latencias(config: dict[str, Any], imagen_rgb: np.ndarray | N
         for formato in formatos:
             clave, marca = clave_y_marca(config, formato)
             predictor = obtener_predictor(formato, clave, marca)
-            for _ in range(5):  # calentamiento: la primera llamada no es representativa
+            for _ in range(5):
                 predictor.predecir(lote)
             tiempos = [predictor.predecir(lote)[1] for _ in range(30)]
             info = predictor.descripcion()
@@ -1326,11 +1247,6 @@ def bloque_comparar_latencias(config: dict[str, Any], imagen_rgb: np.ndarray | N
             "primer formato medido puede salir penalizado por el trazado del grafo. "
             "Si un resultado te parece imposible, repitela."
         )
-
-
-# --------------------------------------------------------------------------- #
-# Pestana 2: metricas
-# --------------------------------------------------------------------------- #
 
 
 def figura_matriz_confusion(metricas: dict[str, Any], clases: list[str], titulo: str) -> go.Figure:
@@ -1628,7 +1544,6 @@ def pestana_metricas(config: dict[str, Any]) -> None:
         else:
             st.info("La curva precision-recall exige ambas clases en el conjunto.")
 
-    # --- Falsos negativos ---------------------------------------------------
     fn = datos.get("falsos_negativos", {})
     st.markdown("#### Analisis de falsos negativos")
     st.caption(
@@ -1665,7 +1580,6 @@ def pestana_metricas(config: dict[str, Any]) -> None:
                 "en este conjunto. El modelo necesita mas datos o mas capacidad."
             )
 
-    # --- Curvas de entrenamiento -------------------------------------------
     st.markdown("#### Curvas de entrenamiento")
     st.caption(
         "Cómo fue aprendiendo cada modelo, vuelta a vuelta sobre las imágenes. "
@@ -1700,7 +1614,6 @@ def pestana_metricas(config: dict[str, Any]) -> None:
     if not encontradas:
         st.info("No hay historiales de entrenamiento en reports/metricas/.")
 
-    # --- Validacion de la inclinometria ------------------------------------
     validacion = cargar_artefacto_json(
         "reports/metricas/validacion_inclinacion.json",
         marca_de("reports/metricas/validacion_inclinacion.json"),
@@ -1762,9 +1675,6 @@ def obtener_captura(fuente: int | str, ancho: int, alto: int) -> Any:
     captura = abrir_camara(fuente, ancho, alto)
     if not captura.isOpened():
         return captura
-    # Se envuelve en el hilo lector: sin el, los fotogramas se acumulan en el
-    # bufer de la fuente y el retardo entre mover la camara y verlo en pantalla
-    # crece sin limite.
     return LectorAsincrono(captura)
 
 
@@ -1774,8 +1684,6 @@ def liberar_camara() -> None:
     Necesario porque ``cache_resource`` mantendria el dispositivo abierto -y el
     piloto de la webcam encendido- aunque el usuario detenga el analisis.
     """
-    # Parar el hilo lector ANTES de limpiar la cache: si solo se limpiara la
-    # cache, el hilo seguiria vivo leyendo y reteniendo el dispositivo.
     lector = st.session_state.pop("lector_activo", None)
     if lector is not None:
         with contextlib.suppress(Exception):
@@ -1961,13 +1869,9 @@ def pestana_camara(
     )
 
     if modo == "foto":
-        # Una instantanea es una fotografia: se analiza con el modelo de foto y
-        # con mosaicos, igual que una imagen subida.
         _modo_foto(config, controles, predictor)
         return
 
-    # El video usa su propio modelo. Cargarlo aqui y no en main() evita que abrir
-    # la aplicacion cargue en memoria un modelo que quiza no se llegue a usar.
     formato_video = controles.get("formato_video")
     predictor_video = predictor
     if formato_video and formato_video != predictor.formato:
@@ -2039,9 +1943,6 @@ def _foto_desde_celular(config: dict[str, Any], controles: dict[str, Any]) -> An
             )
             return None
 
-        # El lector asincrono no tiene ningun fotograma en el instante de abrir:
-        # su hilo acaba de arrancar y el primero de un stream de red tarda unas
-        # decimas en llegar. Leer una sola vez fallaria casi siempre.
         fotograma = None
         limite = time.perf_counter() + 5.0
         while time.perf_counter() < limite:
@@ -2051,8 +1952,6 @@ def _foto_desde_celular(config: dict[str, Any], controles: dict[str, Any]) -> An
                 break
             time.sleep(0.1)
 
-    # La conexion se cierra tras la captura: el modo foto es de un disparo, y
-    # dejar el stream abierto lo mantendria ocupado para el modo de video.
     liberar_camara()
 
     if fotograma is None:
@@ -2248,15 +2147,10 @@ def _capturar_y_medir(
     if not leido or fotograma is None:
         return {"error": "No se pudo capturar el fotograma. Comprueba que la cámara sigue activa."}
 
-    # La misma orientacion que muestra el video en vivo, para que lo medido sea
-    # exactamente lo que se estaba viendo.
     fotograma = orientar_fotograma(fotograma, controles)
     alto, ancho = fotograma.shape[:2]
     rgb = cv2.cvtColor(fotograma, cv2.COLOR_BGR2RGB)
 
-    # Si el fotograma da para trocearlo, se usa la zona que senala el
-    # clasificador; si no -una webcam de 640x480-, el recorte central, que es lo
-    # que el modo en vivo estaba analizando de todas formas.
     mosaicos = None
     if _conviene_trocear(rgb, config):
         mosaicos = predecir_por_mosaicos(predictor, rgb, config, lado=controles.get("lado_mosaico"))
@@ -2272,10 +2166,6 @@ def _capturar_y_medir(
     medidas = medir_grieta(recorte, config, escala_mm_por_px=referencia.mm_por_px)
     mascara, puentes, _ = segmentar_grieta(recorte, config)
 
-    # El veredicto de riesgo tambien, y sobre ESTE fotograma: una medida sin su
-    # consecuencia obliga a mirar el video de al lado para saber que significa, y
-    # ese video ya muestra otro encuadre. La captura debe bastarse sola, porque
-    # es lo que se guarda para el informe.
     inclinacion = estimar_inclinacion(
         fotograma,
         config,
@@ -2444,7 +2334,6 @@ def _modo_video(
             "recuperar el vídeo fluido."
         )
 
-    # --- Seleccion de la fuente de video ------------------------------------
     fuente_tipo = st.radio(
         "Fuente de vídeo",
         ["equipo", "celular"],
@@ -2495,9 +2384,6 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
         st.caption(f"Se conectará a `{url}`")
         fuente: int | str = url
     else:
-        # El sondeo de dispositivos se hace SOLO cuando el usuario lo pide: abrir
-        # cada indice enciende brevemente el piloto de la webcam, y hacerlo por el
-        # mero hecho de abrir la pestana seria una sorpresa desagradable.
         if "camaras_detectadas" not in st.session_state:
             st.info(
                 "Para empezar hay que localizar los dispositivos conectados. La búsqueda "
@@ -2531,14 +2417,8 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
             ),
             format_func=lambda i: f"Dispositivo {i}",
         )
-    # El tamano de la vista se queda visible; los otros dos controles van
-    # plegados. Cada bloque de ajustes que ocupa alto empuja hacia abajo el video
-    # y el veredicto, que son las dos cosas que hay que mirar mientras se inspecciona.
-    # Los ajustes se tocan una vez; el video y el riesgo, todo el rato.
     columna_a, columna_b = st.columns([2, 3])
     with columna_a:
-        # Un stream de telefono llega en vertical (1200x1600) y a ancho completo
-        # desplaza el semaforo de riesgo fuera de la pantalla.
         ancho_vista = st.select_slider(
             "Tamaño del vídeo",
             options=[320, 400, 480, 560, 640],
@@ -2613,11 +2493,6 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
             st.session_state.camara_activa = True
             st.rerun()
     with boton_medio:
-        # Congelar y medir, en vez de medir en cada fotograma. A la resolucion
-        # del video una fisura ocupa uno o dos pixeles, y un ancho calculado
-        # sobre eso bailaria entre valores distintos en cada fotograma sin que la
-        # pared cambiase. El video sirve para ENCONTRAR la grieta; la medida se
-        # toma sobre una captura quieta y a resolucion completa.
         if st.button("📏 Medir", use_container_width=True, disabled=not activa):
             st.session_state.medir_ahora = True
             st.rerun()
@@ -2628,18 +2503,10 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
             liberar_camara()
             st.rerun()
 
-    # Una medida tomada se queda en pantalla hasta que se descarta: el bucle de
-    # video la borraria en el siguiente fotograma, y entonces no habria forma de
-    # leerla ni de fotografiarla para el informe.
     if st.session_state.get("medida_congelada") is not None:
         _panel_medida_congelada(config)
         return
 
-    # Video y veredicto lado a lado, no apilados. Apilados obligaban a hacer
-    # scroll para pasar de "que estoy enfocando" a "que riesgo tiene", que son
-    # justamente las dos cosas que hay que leer juntas mientras se mueve la
-    # camara: si no se ven a la vez, no se puede saber que encuadre produjo que
-    # resultado.
     columna_video, columna_datos = st.columns([3, 2], gap="medium")
     with columna_video:
         marcador_video = st.empty()
@@ -2671,8 +2538,6 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
 
     st.session_state.lector_activo = captura
 
-    # La captura para medir se hace ANTES de entrar al bucle: dentro, cualquier
-    # interaccion reinicia el script de Streamlit y se perderia el fotograma.
     if st.session_state.pop("medir_ahora", False):
         with st.spinner("Midiendo la fisura sobre el fotograma capturado..."):
             st.session_state.medida_congelada = _capturar_y_medir(
@@ -2683,17 +2548,6 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
     suave_prob, suave_angulo = _suavizadores(ventana)
     medidor = st.session_state.setdefault("medidor_fps", MedidorFPS())
     umbral = float(obtener(config, "riesgo.umbral_grieta", 0.5))
-    # Bucle CONTINUO, sin st.rerun() periodico.
-    #
-    # La version anterior capturaba en rafagas de un segundo y despues llamaba a
-    # st.rerun(). Funcionaba, pero cada rerun repinta la pagina entera: el video
-    # parpadeaba una vez por segundo y los textos cambiaban demasiado deprisa
-    # para poder leerlos.
-    #
-    # Streamlit comprueba si hay una interaccion pendiente cada vez que se
-    # actualiza un elemento, asi que este bucle **si es interrumpible**: al
-    # pulsar Detener, la llamada a marcador_video.image() lanza la excepcion de
-    # rerun y el script se reinicia. No hace falta trocear la captura.
     intervalo_texto = float(cfg.get("segundos_entre_textos", 0.4))
     ultimo_texto = 0.0
     fotogramas = 0
@@ -2702,17 +2556,12 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
         t_lectura = time.perf_counter()
         leido, fotograma, edad_ms = captura.leer()
         if not leido:
-            # El hilo aun no tiene el primer fotograma.
             time.sleep(0.02)
             if time.perf_counter() - t_lectura > 5.0:
                 break
             continue
 
-        # Solo se diagnostica el primer fotograma de la rafaga: basta para
-        # detectar el problema y no cuesta nada en los siguientes.
         if fotogramas == 0:
-            # Se pasa la ANTIGUEDAD, no el tiempo de lectura: con el hilo
-            # lector, read() devuelve al instante y ya no mide nada util.
             problema = diagnosticar_fotograma(fotograma, edad_ms)
             if problema:
                 st.session_state.camara_activa = False
@@ -2723,9 +2572,6 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
         if not leido or fotograma is None:
             break
 
-        # El giro y el espejo los decide el usuario. Ver orientar_fotograma():
-        # el espejo rompe la lectura del marcador de escala, asi que viene
-        # desactivado y se avisa cuando se enciende.
         fotograma = orientar_fotograma(fotograma, controles)
         resultado = procesar_fotograma(fotograma, predictor, config, controles, fraccion)
 
@@ -2735,21 +2581,9 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
         medidor.marcar()
         fotogramas += 1
 
-        # Esta llamada es tambien el punto donde Streamlit puede interrumpir el
-        # bucle si el usuario pulsa Detener.
-        # width en pixeles y no use_column_width: la anchura de la columna varia
-        # con el navegador, y un stream vertical a ancho completo empuja el
-        # veredicto fuera de la pantalla.
         marcador_video.image(resultado["anotada_rgb"], width=ancho_vista)
         st.session_state.edad_fotograma = edad_ms
 
-        # La orientacion se mide sobre el RECORTE, nunca sobre el fotograma
-        # anotado: este ultimo lleva las lineas verdes de Hough dibujadas
-        # encima, y volver a pasarle Canny detectaria esas lineas en vez de la
-        # grieta. Ademas solo se calcula cuando hay grieta, porque es lo unico
-        # que el motor de reglas usa (R3/R4 exigen hay_grieta) y cada llamada es
-        # una pasada completa de Canny+Hough: ~3 ms por fotograma que no se
-        # gastan cuando no hacen falta.
         if (prob or 0.0) >= umbral:
             orientacion_txt = clasificar_orientacion_grieta(
                 resultado["recorte_bgr"],
@@ -2769,17 +2603,11 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
             confianza_inclinacion=inclinacion.confianza if inclinacion.fiable else 0,
         )
 
-        # El video se actualiza en cada fotograma; los textos, varias veces por
-        # segundo. Repintar las tarjetas y el semaforo a 15 Hz los vuelve
-        # ilegibles y ademas cuesta mas que el propio analisis.
         ahora = time.perf_counter()
         if ahora - ultimo_texto < intervalo_texto:
             continue
         ultimo_texto = ahora
 
-        # Estado de la escala, en vivo. Cuesta un par de milisegundos y evita el
-        # peor recorrido posible: apuntar, pulsar Medir y descubrir solo entonces
-        # que no habia marcador en el encuadre y la medida sale en pixeles.
         if controles.get("espejo"):
             marcador_escala.warning(
                 "🪞 Con el espejo activado **no se puede leer el marcador**: su patrón "
@@ -2825,9 +2653,6 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
             estilos.semaforo(evaluacion.nivel, evaluacion.resumen), unsafe_allow_html=True
         )
 
-        # Siempre el MISMO tipo de elemento. Alternar entre caption y warning
-        # cambia la altura del bloque y hace saltar todo lo que hay debajo, que
-        # es la otra mitad de la sensacion de parpadeo.
         if not suave_prob.lleno():
             aviso = f"⏳ Estabilizando: {len(suave_prob)}/{ventana} fotogramas en la ventana."
         elif inclinacion.motivo_rechazo:
@@ -2849,15 +2674,8 @@ ni instalar nada en el PC. El vídeo viaja por tu red local; no sale a internet.
         return
 
 
-# --------------------------------------------------------------------------- #
-# Punto de entrada
-# --------------------------------------------------------------------------- #
-
-
 def main() -> None:
     """Construye y renderiza la aplicacion completa."""
-    # set_page_config debe ser la primera llamada de Streamlit que se ejecuta;
-    # por eso el titulo se lee del YAML directamente y no del cache de sesion.
     st.set_page_config(
         page_title="Evaluacion de Riesgo Estructural",
         page_icon="🏗️",
@@ -2910,9 +2728,6 @@ def main() -> None:
         pestana_camara(config, controles, predictor)
 
     with pestana3:
-        # Mientras la camara esta activa la pagina se recarga cada segundo.
-        # Reconstruir cinco figuras de Plotly en cada rerun robaria fotogramas al
-        # video sin que nadie las este mirando.
         if st.session_state.get("camara_activa"):
             st.info(
                 "Métricas en pausa mientras la cámara está activa, para no robarle "

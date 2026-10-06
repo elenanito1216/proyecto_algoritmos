@@ -132,7 +132,7 @@ def _crear_conversor(modelo: Any, directorio_temporal: Path) -> Any:
     try:
         modelo.export(str(destino_sm))
         return tf.lite.TFLiteConverter.from_saved_model(str(destino_sm))
-    except Exception as error_sm:  # noqa: BLE001 - se reporta al caer al plan B
+    except Exception as error_sm:  # noqa: BLE001
         print(f"  Aviso: export() a SavedModel fallo ({error_sm}). Probando from_keras_model.")
         try:
             return tf.lite.TFLiteConverter.from_keras_model(modelo)
@@ -200,13 +200,8 @@ def main() -> int:
             )
             conversor_int8.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
             if args.io_int8:
-                # Full integer: util para NPUs que no aceptan tensores float.
                 conversor_int8.inference_input_type = tf.int8
                 conversor_int8.inference_output_type = tf.int8
-            # Si no se pide --io-int8, la entrada y la salida quedan en float32 y
-            # TFLite inserta las operaciones de (de)cuantizacion en los extremos.
-            # Los pesos y la aritmetica interna siguen siendo int8: se conserva la
-            # ganancia de tamano y velocidad sin complicar el codigo de la app.
 
             tflite_int8 = conversor_int8.convert()
             ruta_int8 = directorio_modelos / f"{base_nombre}_int8.tflite"

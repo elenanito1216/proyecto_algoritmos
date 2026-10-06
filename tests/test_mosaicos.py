@@ -62,15 +62,7 @@ class PredictorFalso(Predictor):
         return {"formato": "falso", "archivo": "-", "tamano_mb": 0.0}
 
 
-# ---------------------------------------------------------------------------
-# generar_ventanas
-# ---------------------------------------------------------------------------
-
-
 def test_cubre_la_imagen_entera_sin_dejar_franjas():
-    # 1000 no es multiplo de 240 (el paso con lado 480 y solape 0.5): es
-    # justamente el caso en el que una implementacion ingenua dejaria fuera la
-    # franja final.
     alto, ancho, lado = 1000, 1000, 480
     ventanas = generar_ventanas(alto, ancho, lado, solape=0.5)
 
@@ -94,7 +86,6 @@ def test_todas_las_ventanas_son_cuadradas_del_lado_pedido():
 
 
 def test_imagen_menor_que_el_mosaico_devuelve_una_sola_ventana():
-    # Trocear no aportaria nada y solo anadiria coste: se degrada al caso normal.
     assert generar_ventanas(200, 300, 480, solape=0.5) == [(0, 0, 300, 200)]
 
 
@@ -109,7 +100,6 @@ def test_mas_solape_produce_mas_ventanas():
 
 
 def test_el_solape_se_recorta_al_rango_valido():
-    # Un solape de 1.0 daria paso 0 y un bucle infinito. Se recorta a 0.9.
     ventanas = generar_ventanas(1600, 1200, 480, solape=1.0)
     assert 0 < len(ventanas) < 10_000
 
@@ -122,11 +112,6 @@ def test_solape_negativo_se_trata_como_cero():
 def test_nunca_devuelve_lista_vacia():
     for alto, ancho in [(1, 1), (5, 2000), (2000, 5), (1600, 1200)]:
         assert generar_ventanas(alto, ancho, 480, 0.5), f"vacia para {alto}x{ancho}"
-
-
-# ---------------------------------------------------------------------------
-# predecir_por_mosaicos
-# ---------------------------------------------------------------------------
 
 
 def _imagen_con_region_clara(
@@ -149,9 +134,6 @@ def _imagen_con_region_clara(
 
 
 def test_el_maximo_detecta_una_region_pequena_que_la_media_diluiria():
-    # Este es el argumento de diseno completo, en una prueba: una region clara
-    # que ocupa el 2% de la imagen. Con agregacion por media queda enterrada
-    # entre las ventanas oscuras; con maximo, se ve.
     imagen = _imagen_con_region_clara(1600, 1200, (100, 100, 300, 300))
     predictor = PredictorFalso()
 
@@ -166,7 +148,6 @@ def test_senala_la_ventana_donde_esta_la_evidencia():
     resultado = predecir_por_mosaicos(PredictorFalso(), imagen, CONFIG)
 
     x0, y0, x1, y1 = resultado.ventanas[resultado.indice_maximo]
-    # El centro de la ventana ganadora debe caer dentro de la region clara.
     assert 0 <= (x0 + x1) // 2 <= 480
     assert 0 <= (y0 + y1) // 2 <= 480
 
@@ -177,8 +158,6 @@ def test_hay_una_probabilidad_por_ventana():
 
 
 def test_todas_las_ventanas_se_infieren_en_un_solo_lote():
-    # Agrupar no es una optimizacion opcional: el coste fijo por llamada al
-    # modelo domina, y una llamada por ventana multiplicaria el tiempo.
     predictor = PredictorFalso()
     resultado = predecir_por_mosaicos(predictor, np.zeros((1600, 1200, 3), np.uint8), CONFIG)
     assert predictor.lotes_vistos == [len(resultado.ventanas)]
@@ -193,7 +172,6 @@ def test_la_cota_de_mosaicos_agranda_el_lado_en_vez_de_descartar_zonas():
     assert len(resultado.ventanas) <= 20
     assert resultado.lado > 160, "el lado deberia haber crecido"
 
-    # Y lo esencial: seguir cubriendo la imagen completa.
     cubierto = np.zeros((3000, 3000), dtype=bool)
     for x0, y0, x1, y1 in resultado.ventanas:
         cubierto[y0:y1, x0:x1] = True
@@ -238,19 +216,10 @@ def test_el_argumento_explicito_manda_sobre_el_yaml():
 
 
 def test_acepta_imagenes_en_escala_de_grises():
-    # preparar_imagen replica los canales; el troceado no debe romperse antes.
     imagen = np.zeros((1600, 1200), dtype=np.uint8)
     resultado = predecir_por_mosaicos(PredictorFalso(), imagen, CONFIG)
     assert len(resultado.ventanas) > 1
 
-
-# ---------------------------------------------------------------------------
-# elegir_modelo
-#
-# La aplicacion ya no tiene selector: elige ella. Eso convierte esta funcion en
-# codigo critico, porque un fallo aqui no da error, solo hace que el analisis se
-# ejecute silenciosamente con un modelo peor del que corresponde.
-# ---------------------------------------------------------------------------
 
 TODOS = {"keras": True, "tflite": True, "ensemble": True}
 CONFIG_MODELOS: dict[str, Any] = {"app": {"modelos": {"foto": "keras", "video": "tflite"}}}
@@ -268,16 +237,11 @@ def test_sin_ningun_artefacto_devuelve_none_en_vez_de_fallar():
 
 
 def test_el_repliegue_de_foto_prefiere_el_ensemble_antes_que_tflite():
-    # Si falta MobileNetV2, para fotos es preferible el ensemble (recall 0.97)
-    # a TFLite (recall 0.87): la foto admite el tiempo extra, y §4.1 dice que el
-    # error que no hay que cometer es el falso negativo.
     sin_keras = {**TODOS, "keras": False}
     assert elegir_modelo(CONFIG_MODELOS, "foto", sin_keras) == "ensemble"
 
 
 def test_el_repliegue_de_video_prefiere_keras_antes_que_el_ensemble():
-    # Al reves que en foto: sin TFLite, el video ya va lento, y el ensemble solo
-    # anadiria un 11% mas de latencia sin resolver nada.
     sin_tflite = {**TODOS, "tflite": False}
     assert elegir_modelo(CONFIG_MODELOS, "video", sin_tflite) == "keras"
 
@@ -308,15 +272,6 @@ def test_hay_etiqueta_legible_para_cada_formato():
         assert ETIQUETAS_MODELO[formato]
 
 
-# ---------------------------------------------------------------------------
-# region_activa
-#
-# La ventana de mayor probabilidad no contiene la grieta entera: mide 480 px y
-# una fisura recorre la fotografia. Medir solo ahi dentro la truncaba un 36%
-# sobre las fotos propias. Estas pruebas fijan el comportamiento correcto.
-# ---------------------------------------------------------------------------
-
-
 def _resultado(
     ventanas: list[tuple[int, int, int, int]], probabilidades: list[float]
 ) -> ResultadoMosaicos:
@@ -341,7 +296,6 @@ def _resultado(
 
 
 def test_la_region_abarca_todas_las_ventanas_activas_contiguas():
-    # Tres ventanas en columna, todas positivas: la region debe cubrir las tres.
     resultado = _resultado(
         [(0, 0, 100, 100), (0, 50, 100, 150), (0, 100, 100, 200)], [0.9, 0.8, 0.7]
     )
@@ -362,9 +316,6 @@ def test_la_region_excluye_las_ventanas_que_no_disparan():
 
 
 def test_la_region_no_salta_a_un_grupo_desconectado():
-    # Si el modelo dispara en dos esquinas opuestas por motivos distintos, la
-    # caja que englobase ambas seria la imagen entera y se perderia la ventaja
-    # de acotar. Solo se sigue el grupo contiguo al maximo.
     resultado = _resultado(
         [(0, 0, 100, 100), (0, 50, 100, 150), (900, 900, 1000, 1000)], [0.9, 0.8, 0.7]
     )

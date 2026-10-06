@@ -175,9 +175,6 @@ def evaluar_estrategia(
     probabilidades: list[float] = []
     tiempos: list[float] = []
     ventanas_por_foto: list[int] = []
-    # El lado pedido no siempre es el aplicado: si una foto genera mas ventanas
-    # que la cota, el mosaico se agranda. Reportarlo evita comparar dos filas de
-    # la tabla que en realidad usaron el mismo lado.
     lados_efectivos: list[int] = []
 
     for ruta in rutas:
@@ -279,8 +276,6 @@ def main() -> None:
     predictor = cargar_predictor(config, args.formato, args.modelo)
     print(f"Predictor: {args.formato}\n")
 
-    # Calentamiento: la primera inferencia de Keras incluye la construccion del
-    # grafo y falsearia la medida de coste de la primera estrategia evaluada.
     predictor.predecir_imagen(cargar_imagen(rutas[0]), config)
 
     resultados = [

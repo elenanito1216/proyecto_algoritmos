@@ -22,10 +22,6 @@ from src.vision.camara import (
     rectangulo_centro,
 )
 
-# --------------------------------------------------------------------------- #
-# Suavizado temporal
-# --------------------------------------------------------------------------- #
-
 
 def test_suavizador_vacio_devuelve_none() -> None:
     assert SuavizadorTemporal(5).valor() is None
@@ -39,9 +35,6 @@ def test_suavizador_devuelve_la_mediana() -> None:
 
 
 def test_el_suavizador_absorbe_un_fotograma_atipico() -> None:
-    # Este es el caso que motiva el modulo: cuatro lecturas coherentes por
-    # debajo del umbral y un fotograma movido que dispara a 0.99. La mediana
-    # debe ignorarlo; una media lo habria subido por encima de 0.5.
     s = SuavizadorTemporal(5)
     for v in (0.10, 0.12, 0.99, 0.11, 0.13):
         s.agregar(v)
@@ -58,8 +51,6 @@ def test_la_ventana_descarta_los_valores_viejos() -> None:
 
 
 def test_los_valores_ausentes_no_contaminan_la_ventana() -> None:
-    # None significa "no se pudo medir", no "vale cero". Tratarlo como cero
-    # arrastraria la mediana hacia abajo y falsearia el desaplome.
     s = SuavizadorTemporal(5)
     s.agregar(2.0)
     s.agregar(None)
@@ -119,14 +110,9 @@ def test_una_ventana_no_positiva_es_error(ventana: int) -> None:
         SuavizadorTemporal(ventana)
 
 
-# --------------------------------------------------------------------------- #
-# Recorte central
-# --------------------------------------------------------------------------- #
-
-
 def test_el_recorte_es_cuadrado_y_esta_centrado() -> None:
     imagen = np.zeros((480, 640, 3), dtype=np.uint8)
-    imagen[220:260, 300:340] = 255  # marca en el centro
+    imagen[220:260, 300:340] = 255
 
     recorte = recortar_centro(imagen, 0.5)
     assert recorte.shape[0] == recorte.shape[1] == 240
@@ -150,19 +136,11 @@ def test_una_fraccion_no_positiva_es_error(fraccion: float) -> None:
 
 
 def test_el_rectangulo_coincide_con_lo_que_recorta() -> None:
-    # El rectangulo se dibuja sobre el video para que el usuario vea que region
-    # analiza el modelo: si no coincidiera con el recorte real, la interfaz
-    # estaria mintiendo.
     imagen = np.zeros((480, 640, 3), dtype=np.uint8)
     for fraccion in (0.3, 0.6, 1.0):
         x0, y0, x1, y1 = rectangulo_centro(imagen, fraccion)
         recorte = recortar_centro(imagen, fraccion)
         assert (y1 - y0, x1 - x0) == recorte.shape[:2]
-
-
-# --------------------------------------------------------------------------- #
-# Medidor de FPS
-# --------------------------------------------------------------------------- #
 
 
 def test_el_medidor_arranca_en_cero() -> None:
@@ -185,11 +163,6 @@ def test_con_varias_marcas_estima_una_tasa_positiva() -> None:
     assert medidor.ms_por_fotograma() > 0.0
 
 
-# --------------------------------------------------------------------------- #
-# Fuentes de red (camara del celular)
-# --------------------------------------------------------------------------- #
-
-
 @pytest.mark.parametrize("fuente", [0, 1, 2])
 def test_un_indice_no_es_fuente_de_red(fuente: int) -> None:
     assert es_fuente_de_red(fuente) is False
@@ -209,24 +182,17 @@ def test_las_urls_de_stream_se_reconocen(url: str) -> None:
 
 
 def test_una_cadena_que_no_es_url_no_es_fuente_de_red() -> None:
-    # "0" escrito como texto sigue siendo un indice de dispositivo, no una URL.
     assert es_fuente_de_red("0") is False
 
 
 @pytest.mark.parametrize(
     ("entrada", "esperado"),
     [
-        # Lo que muestra en pantalla la app IP Webcam: host y puerto, sin mas.
         ("192.168.1.40:8080", "http://192.168.1.40:8080/video"),
-        # Sin puerto: se asume el 8080 de IP Webcam.
         ("192.168.1.40", "http://192.168.1.40:8080/video"),
-        # Ya completa: no se toca. Puerto 4747 es el de DroidCam.
         ("http://192.168.1.40:4747/video", "http://192.168.1.40:4747/video"),
-        # Con ruta pero sin esquema.
         ("192.168.1.40:8080/video", "http://192.168.1.40:8080/video"),
-        # Con esquema y puerto pero sin ruta.
         ("http://192.168.1.40:8080", "http://192.168.1.40:8080/video"),
-        # Espacios de un copiar y pegar descuidado.
         ("  192.168.1.40:8080  ", "http://192.168.1.40:8080/video"),
     ],
 )
@@ -244,20 +210,8 @@ def test_el_puerto_por_defecto_es_configurable() -> None:
 
 
 def test_normalizar_es_idempotente() -> None:
-    # Aplicarlo dos veces no debe anadir otra vez "/video" ni el puerto.
     una = normalizar_url_celular("192.168.1.40:8080")
     assert normalizar_url_celular(una) == una
-
-
-# ---------------------------------------------------------------------------
-# Presentacion del modo video
-#
-# El video y el veredicto de riesgo tienen que verse a la vez. Apilados, un
-# stream vertical de telefono empuja el semaforo fuera de la pantalla, y quien
-# inspecciona pierde justo la relacion que necesita: que encuadre produjo que
-# resultado. Estas pruebas fijan esa decision de diseno para que no se deshaga
-# sin querer en un cambio posterior.
-# ---------------------------------------------------------------------------
 
 
 def _cargar_app() -> Any:
@@ -292,15 +246,12 @@ def test_las_tarjetas_se_apilan_en_una_columna_junto_al_video():
 
 
 def test_las_tarjetas_siguen_en_cuatro_columnas_por_defecto():
-    # El valor por defecto no cambia: hay otros sitios que las usan a lo ancho.
     app = _cargar_app()
     html = app._tarjetas_vivo(0.9, 1.2, _InclinacionFalsa(), 25.0, 5.0, 0.5, 0.01, 30.0)
     assert "repeat(4,1fr)" in html
 
 
 def test_las_tarjetas_nunca_piden_cero_columnas():
-    # Una rejilla de 0 columnas no renderiza nada: el usuario veria el video sin
-    # ningun dato al lado y sin ningun error que lo explique.
     app = _cargar_app()
     html = app._tarjetas_vivo(0.9, 1.2, _InclinacionFalsa(), 25.0, 5.0, 0.5, 0.01, 30.0, columnas=0)
     assert "repeat(1,1fr)" in html
@@ -314,16 +265,6 @@ def test_las_cuatro_tarjetas_estan_presentes_en_ambas_disposiciones():
         )
         for titulo in ("P(grieta) suavizada", "Desaplome", "Fotogramas", "Inferencia"):
             assert titulo in html, f"falta '{titulo}' con {columnas} columnas"
-
-
-# ---------------------------------------------------------------------------
-# Orientacion del fotograma
-#
-# La aplicacion volteaba siempre el fotograma en horizontal, pensando en una
-# webcam que apunta al usuario. Apuntando a una pared eso es incorrecto, y
-# ademas rompe algo invisible: un marcador ArUco reflejado no se puede leer, de
-# modo que el indicador de escala en vivo nunca se encendia.
-# ---------------------------------------------------------------------------
 
 
 def test_sin_opciones_el_fotograma_no_se_toca():
@@ -358,9 +299,6 @@ def test_un_giro_no_contemplado_se_ignora_sin_fallar():
 
 
 def test_los_giros_no_impiden_leer_el_marcador_pero_el_espejo_si():
-    # Es la razon por la que el espejo viene desactivado: el formato ArUco es
-    # invariante a la rotacion por diseno, pero su patron reflejado no existe en
-    # el diccionario.
     cv2 = pytest.importorskip("cv2")
     from src.vision.escala import detectar_escala
 
@@ -379,15 +317,6 @@ def test_los_giros_no_impiden_leer_el_marcador_pero_el_espejo_si():
     reflejada = app.orientar_fotograma(escena, {"espejo": True})
     assert not detectar_escala(reflejada, config).detectada
 
-
-# ---------------------------------------------------------------------------
-# uso_en_la_app
-#
-# El informe de evaluacion trae tres modelos y la aplicacion solo usa dos. Si
-# esta relacion se rompe, la pestana de metricas sigue funcionando pero atribuye
-# al sistema las cifras de un modelo que no interviene, que es peor que un error
-# visible.
-# ---------------------------------------------------------------------------
 
 _DISCO_COMPLETO = {
     "keras": True,
@@ -434,8 +363,6 @@ def test_la_linea_base_no_se_presenta_como_parte_del_sistema(
 def test_la_etiqueta_acompana_al_repliegue_cuando_falta_un_artefacto(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Sin TFLite el video se repliega a MobileNetV2: entonces un mismo modelo
-    # responde en los dos modos, y la etiqueta debe decirlo.
     app = _cargar_app()
     monkeypatch.setattr(
         app, "artefactos_disponibles", lambda _c: {**_DISCO_COMPLETO, "tflite": False}
@@ -446,8 +373,6 @@ def test_la_etiqueta_acompana_al_repliegue_cuando_falta_un_artefacto(
 
 
 def test_el_ensemble_atribuye_sus_dos_componentes(monkeypatch: pytest.MonkeyPatch) -> None:
-    # El ensemble no es un archivo: si un modo lo usa, los dos modelos que lo
-    # componen si forman parte del sistema.
     app = _cargar_app()
     monkeypatch.setattr(app, "artefactos_disponibles", lambda _c: _DISCO_COMPLETO)
     config = {"app": {**_CONFIG_APP["app"], "modelos": {"foto": "ensemble", "video": "tflite"}}}

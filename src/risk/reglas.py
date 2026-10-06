@@ -27,7 +27,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-# Niveles ordenados de menor a mayor gravedad. El indice es la severidad.
 NIVELES: tuple[str, str, str] = ("Bajo", "Medio", "Alto")
 
 SEVERIDAD_BAJA = 0
@@ -176,7 +175,6 @@ def evaluar_riesgo(
     reglas: list[ReglaDisparada] = []
     advertencias: list[str] = []
 
-    # --- Evidencia de grieta ------------------------------------------------
     hay_grieta = prob >= umbral_grieta
 
     if hay_grieta:
@@ -229,7 +227,6 @@ def evaluar_riesgo(
             )
         )
 
-    # --- Orientacion de la grieta ------------------------------------------
     if hay_grieta and orientacion_norm and orientacion_norm != "indeterminada":
         orientaciones_graves_elemento = [str(o).lower() for o in graves.get(elemento_norm, [])]
         if orientacion_norm in orientaciones_graves_elemento:
@@ -263,7 +260,6 @@ def evaluar_riesgo(
                 )
             )
 
-    # --- Desaplome ----------------------------------------------------------
     desaplome_fiable = angulo_desaplome is not None and confianza_inclinacion >= min_confianza
     magnitud = abs(float(angulo_desaplome)) if angulo_desaplome is not None else None
 
@@ -318,7 +314,6 @@ def evaluar_riesgo(
             )
         )
 
-    # --- Elemento critico ---------------------------------------------------
     if hay_grieta and elemento_norm in criticos:
         reglas.append(
             ReglaDisparada(
@@ -338,7 +333,6 @@ def evaluar_riesgo(
             )
         )
 
-    # --- Composicion: dos senales medias concurrentes -----------------------
     hay_desaplome_medio = any(r.codigo == "R6" for r in reglas)
     if hay_grieta and hay_desaplome_medio:
         reglas.append(

@@ -1,4 +1,4 @@
-﻿"""Entrena MobileNetV2 por transfer learning, en dos etapas.
+"""Entrena MobileNetV2 por transfer learning, en dos etapas.
 
 Etapa 1 - **extraccion de caracteristicas**: la base preentrenada en ImageNet
 queda congelada y solo se entrena la cabeza densa. Es rapido y establece un
@@ -118,9 +118,6 @@ def main() -> int:
 
     nombre = str(args.nombre or obtener(config, "transfer.nombre", "mobilenetv2"))
 
-    # La degradacion de escala se inyecta en la configuracion ya cargada, no se
-    # pasa como parametro suelto: asi viaja sola hasta crear_dataset y queda
-    # registrada en el resumen del experimento junto al resto de hiperparametros.
     if args.degradacion_escala is not None:
         aumento = config.setdefault("preproceso", {}).setdefault("aumento", {})
         aumento["degradacion_escala"] = {
@@ -151,7 +148,6 @@ def main() -> int:
     print("\n[1/6] Cargando datos")
     datasets, inventarios = cargar_particiones(config, subset=args.subset, batch_size=batch)
 
-    # train y val se repiten indefinidamente: Keras necesita el numero de pasos.
     pasos_train = pasos_por_epoca(inventarios["train"], batch)
     pasos_val = pasos_por_epoca(inventarios["val"], batch)
 
@@ -209,8 +205,6 @@ def main() -> int:
     if hacer_ft:
         n_capas = int(obtener(config, "transfer.fine_tuning.capas_a_descongelar", 30))
         capas_descongeladas = descongelar_ultimas_capas(base, n_capas)
-        # Recompilar es obligatorio: cambiar 'trainable' no surte efecto hasta que
-        # se reconstruye el grafo de entrenamiento con el nuevo optimizador.
         modelo = compilar(modelo, lr_2)
         params_ft = contar_parametros(modelo)
         print(

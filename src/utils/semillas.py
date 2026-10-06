@@ -36,9 +36,6 @@ def fijar_semillas(semilla: int = 42, determinismo_estricto: bool = False) -> No
 
     np.random.seed(semilla)
 
-    # TensorFlow se importa aqui y no arriba para que este modulo pueda usarse
-    # (por ejemplo desde los tests del motor de reglas) sin pagar los ~8 s de
-    # arranque de TF.
     import tensorflow as tf
 
     tf.random.set_seed(semilla)

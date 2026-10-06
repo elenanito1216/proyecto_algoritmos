@@ -189,9 +189,6 @@ def respuesta_de_cresta(
     salida = np.zeros_like(imagen)
     for sigma in escalas:
         suave = cv2.GaussianBlur(imagen, (0, 0), sigma)
-        # La normalizacion por sigma^2 es lo que hace comparables las escalas:
-        # sin ella, la respuesta decae con el suavizado y siempre ganaria la
-        # escala mas fina, que es la mas ruidosa.
         factor = sigma**2
         dxx = cv2.Sobel(suave, cv2.CV_32F, 2, 0, ksize=3) * factor
         dyy = cv2.Sobel(suave, cv2.CV_32F, 0, 2, ksize=3) * factor
@@ -204,15 +201,8 @@ def respuesta_de_cresta(
 
         manchez = menor**2 / np.maximum(mayor**2, 1e-6)
         fuerza = np.sqrt(menor**2 + mayor**2)
-        # El corte marca que se considera "estructura fuerte". Se probo fijarlo
-        # en el percentil 99 en vez de en el maximo, por robustez ante un boquete
-        # oscuro que dispara el maximo, y sobre las 31 fotografias el resultado
-        # fue mucho mas inestable: la respuesta se vuelve tan sensible que
-        # enciende bordes y sombras. Se mantiene el maximo, que es ademas lo que
-        # propone Frangi.
         corte = max(0.5 * float(fuerza.max()), 1e-6)
         valor = np.exp(-manchez / (2 * beta**2)) * (1.0 - np.exp(-(fuerza**2) / (2 * corte**2)))
-        # mayor <= 0 es una linea CLARA sobre fondo oscuro: no es una fisura.
         valor[mayor <= 0] = 0.0
         salida = np.maximum(salida, valor)
     return salida
@@ -247,12 +237,12 @@ def _salto_de_fondo(gris: np.ndarray, componente: np.ndarray) -> float:
 
     saltos: list[float] = []
     filas = np.where(trazo.any(axis=1))[0]
-    for fila in filas[::3]:  # una de cada tres basta y cuesta un tercio
+    for fila in filas[::3]:
         puntos = np.where(trazo[fila] > 0)[0]
         centro = int(puntos.mean())
         radio = int((puntos.max() - puntos.min()) // 2) + 10
         if centro - radio - 12 < 0 or centro + radio + 12 >= lienzo.shape[1]:
-            continue  # el trazo toca el borde: no hay fondo que comparar
+            continue
         izquierda = float(np.median(lienzo[fila, centro - radio - 12 : centro - radio - 2]))
         derecha = float(np.median(lienzo[fila, centro + radio + 2 : centro + radio + 12]))
         saltos.append(derecha - izquierda)
@@ -315,11 +305,9 @@ def segmentar_grieta(
         sombrero = (respuesta * 255).astype(np.uint8)
     else:
         lado = int(cfg.get("kernel_blackhat", 15))
-        lado = lado if lado % 2 == 1 else lado + 1  # los nucleos impares tienen centro
+        lado = lado if lado % 2 == 1 else lado + 1
         nucleo = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (lado, lado))
         sombrero = cv2.morphologyEx(realzada, cv2.MORPH_BLACKHAT, nucleo)
-        # Un desenfoque suave antes de umbralizar evita que el ruido del sensor
-        # genere componentes de uno o dos pixeles que luego hay que descartar.
         sombrero = cv2.GaussianBlur(sombrero, (3, 3), 0)
         _, binaria = cv2.threshold(sombrero, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
@@ -328,9 +316,6 @@ def segmentar_grieta(
     binaria = cv2.morphologyEx(binaria, cv2.MORPH_OPEN, nucleo_limpieza)
     binaria = cv2.morphologyEx(binaria, cv2.MORPH_CLOSE, nucleo_limpieza)
 
-    # Se pasan ademas de la mascara: la respuesta dice CUANTO destaca cada pixel,
-    # no solo si supero el umbral, y el gris hace falta para distinguir una
-    # fisura de un canto, que por forma son iguales.
     return _quedarse_con_la_fisura(binaria, config, sombrero, gris)
 
 
@@ -372,16 +357,6 @@ def _quedarse_con_la_fisura(
 
     cfg = obtener(config, "medicion", {}) or {}
     alto, ancho = binaria.shape[:2]
-    # El minimo se mide en AREA y escala con el tamano de la imagen. Es discutible
-    # -una grieta es una linea, y su area crece con su longitud, no con la
-    # superficie de la foto- y de hecho descarta trozos finos de fisura real:
-    # en una foto de 1200x1600 exige 960 px, o sea 320 px de recorrido seguido
-    # para un trazo de 3 px. Se probo sustituirlo por un minimo de LARGO y el
-    # resultado fue peor, medido sobre las 31 fotografias: admite miles de motas
-    # de textura que compiten con la fisura, cinco grietas bien medidas se
-    # desplomaron -uno de 1465 a 117 px- y el tiempo se multiplico por veinte.
-    # Lo que hace falta ahi no es otro umbral de tamano sino separar la fisura de
-    # la textura antes de filtrar (§5.5).
     area_minima = max(
         int(float(cfg.get("area_minima_relativa", 0.0005)) * alto * ancho),
         int(cfg.get("area_minima_absoluta", 30)),
@@ -391,20 +366,14 @@ def _quedarse_con_la_fisura(
     salto_maximo = float((obtener(config, "medicion.cresta", {}) or {}).get("salto_maximo", 8.0))
 
     n, etiquetas, stats, _ = cv2.connectedComponentsWithStats(binaria, connectivity=8)
-    # Se calcula una sola vez: da el ancho local en cada punto, que hace falta
-    # para separar una fisura de una red de textura.
     distancias = cv2.distanceTransform(binaria, cv2.DIST_L2, 5)
 
     candidatos: list[tuple[float, int]] = []
-    for indice in range(1, n):  # 0 es el fondo
+    for indice in range(1, n):
         area = int(stats[indice, cv2.CC_STAT_AREA])
         if area < area_minima:
             continue
 
-        # Cada componente se examina dentro de su propia caja y no sobre la
-        # imagen entera. Con el minimo por area, los componentes eran decenas;
-        # con el minimo por largo son miles, y recorrer la imagen completa una
-        # vez por cada uno multiplicaba el tiempo por cinco.
         x0 = int(stats[indice, cv2.CC_STAT_LEFT])
         y0 = int(stats[indice, cv2.CC_STAT_TOP])
         x1 = x0 + int(stats[indice, cv2.CC_STAT_WIDTH])
@@ -412,12 +381,6 @@ def _quedarse_con_la_fisura(
         recorte_etiquetas = etiquetas[y0:y1, x0:x1]
         recorte_distancias = distancias[y0:y1, x0:x1]
 
-        # La elongacion se mide sobre la caja MINIMA ROTADA, no sobre la caja
-        # alineada con los ejes, y la diferencia no es un matiz: una grieta
-        # diagonal tiene una caja alineada practicamente cuadrada, de modo que
-        # un filtro sobre ella la rechazaria por "compacta". Serian justamente
-        # las fisuras diagonales -las que §4.4 identifica como estructuralmente
-        # significativas en columnas- las que el sistema dejaria de medir.
         componente = (recorte_etiquetas == indice).astype(np.uint8)
         contornos, _ = cv2.findContours(componente, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contornos:
@@ -428,32 +391,11 @@ def _quedarse_con_la_fisura(
         if lado_mayor / lado_menor < elongacion_minima:
             continue
 
-        # Filtro de MARANA. Es el que distingue una grieta de la textura del
-        # panete, y la elongacion no basta para eso: una red de textura que ocupa
-        # una zona cuadrada tiene elongacion baja, pero una que ocupa una franja
-        # la tiene alta y pasaba el filtro.
-        #
-        # Una linea cumple  area = largo x ancho.  Una malla, no: rellena una
-        # superficie, asi que su area es mucho mayor que la de la linea que la
-        # recorre. El cociente entre ambas es ~1 en una fisura y se dispara en
-        # una red. Medido sobre la peor fotografia del conjunto propio:
-        #
-        #     componente        area    largo   ancho   cociente
-        #     malla de textura 73247      556     5.7      23.1   <- descartar
-        #     grieta real       3320      442     4.2       1.8
-        #     grieta real       1173      189     3.7       1.7
-        #     grieta real       1682      163     4.1       2.5
-        #
-        # El cociente no depende del tamano ni de la orientacion, que es lo que
-        # lo hace utilizable sin recalibrar en cada fotografia.
         ancho_medio = 2.0 * float(recorte_distancias[componente > 0].mean())
         esbeltez = _factor_marana(area, lado_mayor, ancho_medio)
         if esbeltez > marana_maxima:
             continue
 
-        # Filtro de CANTO. Por forma, una fisura y el canto entre dos paredes
-        # son la misma cosa; lo que los separa es que el canto cambia el fondo
-        # al cruzarlo y la fisura no (ver _salto_de_fondo).
         if gris is not None and salto_maximo > 0:
             entero = np.zeros(binaria.shape[:2], np.uint8)
             entero[y0:y1, x0:x1] = componente
@@ -545,7 +487,6 @@ def _unir_fragmentos(
     dilatada = cv2.dilate(mascara_candidatos, nucleo)
     _, grupos = cv2.connectedComponents(dilatada, connectivity=8)
 
-    # De cada fragmento se toma un pixel para saber en que grupo cayo.
     por_grupo: dict[int, list[int]] = {}
     for indice in indices:
         ys, xs = np.where(etiquetas == indice)
@@ -654,7 +595,7 @@ def _elegir_grupo(
 
     valores = np.array(rasgos, dtype=float)
     rango = np.ptp(valores, axis=0)
-    rango[rango == 0] = 1.0  # un rasgo igual en todos no desempata
+    rango[rango == 0] = 1.0
     puntos = ((valores - valores.min(axis=0)) / rango).sum(axis=1)
     return grupos[int(np.argmax(puntos))]
 
@@ -691,8 +632,6 @@ def _coser_fragmentos(
     if len(miembros) < 2:
         return puentes
 
-    # Los contornos bastan para medir distancias entre fragmentos, y se submuestrean
-    # porque la precision de un pixel no cambia por donde pasa el tramo de union.
     contornos: dict[int, np.ndarray] = {}
     for indice in miembros:
         trozos, _ = cv2.findContours(
@@ -749,10 +688,6 @@ def esqueletizar(mascara: np.ndarray) -> np.ndarray:
     """
     entrada = (np.asarray(mascara) > 0).astype(np.uint8)
 
-    # El adelgazamiento solo puede tocar pixeles que valgan 1, asi que trabajar
-    # sobre la caja que los envuelve da exactamente el mismo resultado sobre una
-    # superficie menor. En una fisura que ocupa una esquina del encuadre eso es
-    # la diferencia entre procesar el recorte entero y procesar una franja.
     filas = np.flatnonzero(entrada.any(axis=1))
     columnas = np.flatnonzero(entrada.any(axis=0))
     if len(filas) == 0:
@@ -766,8 +701,6 @@ def esqueletizar(mascara: np.ndarray) -> np.ndarray:
         borrados_totales = 0
         for paso in (0, 1):
             p = np.pad(img, 1, mode="constant")
-            # Vecinos en el orden del algoritmo: P2 arriba, y despues en sentido
-            # horario hasta P9 arriba-izquierda.
             p2, p3 = p[:-2, 1:-1], p[:-2, 2:]
             p4, p5 = p[1:-1, 2:], p[2:, 2:]
             p6, p7 = p[2:, 1:-1], p[2:, :-2]
@@ -775,8 +708,6 @@ def esqueletizar(mascara: np.ndarray) -> np.ndarray:
 
             vecinos = [p2, p3, p4, p5, p6, p7, p8, p9]
             cuantos = sum(vecinos)
-            # Transiciones 0 -> 1 recorriendo los vecinos en circulo. Que haya
-            # exactamente una es lo que garantiza no partir la figura en dos.
             circulo = [*vecinos, p2]
             transiciones = sum(
                 ((circulo[i] == 0) & (circulo[i + 1] == 1)).astype(np.uint8) for i in range(8)
@@ -844,29 +775,20 @@ def podar_espolones(
     for _ in range(max(1, iteraciones)):
         vecinos = _contar_vecinos(eje * 255)
         bifurcaciones = (vecinos >= 3) & (eje > 0)
-        # Al quitar las bifurcaciones, el eje se separa en tramos independientes.
         tramos = ((eje > 0) & ~bifurcaciones).astype(np.uint8)
         n, etiquetas, stats, _ = cv2.connectedComponentsWithStats(tramos, connectivity=8)
 
-        # Todo lo que sigue se resuelve con operaciones sobre el conjunto
-        # completo de tramos, y no recorriendolos uno a uno. La diferencia no es
-        # cosmetica: la version anterior comparaba cada tramo contra la imagen
-        # entera, y con varios miles de tramos la poda tardaba 4.4 segundos, mas
-        # que todo el resto de la medicion junta.
         cortos = np.flatnonzero(stats[:, cv2.CC_STAT_AREA] < longitud_minima)
-        cortos = cortos[cortos != 0]  # la etiqueta 0 es el fondo
+        cortos = cortos[cortos != 0]
         if len(cortos) == 0:
             break
 
-        # Un tramo es una pua si termina en el aire. Si no tiene ningun extremo
-        # libre, une dos bifurcaciones y forma parte de la estructura.
         con_extremo_libre = np.unique(etiquetas[(vecinos == 1) & (eje > 0)])
         a_podar = np.intersect1d(cortos, con_extremo_libre, assume_unique=False)
         if len(a_podar) == 0:
             break
 
         eje[np.isin(etiquetas, a_podar)] = 0
-        # Una bifurcacion que se queda sin nada que unir deja de serlo.
         eje[(_contar_vecinos(eje * 255) == 0) & (eje > 0)] = 0
 
     return (eje * 255).astype(np.uint8)
@@ -993,7 +915,6 @@ def _longitud_del_eje(esqueleto: np.ndarray) -> float:
         Longitud en pixeles.
     """
     b = (np.asarray(esqueleto) > 0).astype(np.uint8)
-    # Cada par de vecinos se cuenta una sola vez mirando solo hacia adelante.
     horizontales = int((b[:, :-1] & b[:, 1:]).sum())
     verticales = int((b[:-1, :] & b[1:, :]).sum())
     diagonal_a = int((b[:-1, :-1] & b[1:, 1:]).sum())
@@ -1049,9 +970,6 @@ def _medir_sobre(
             ),
         )
 
-    # El eje se calcula sobre la mascara MAS los puentes, para que el recorrido
-    # pueda seguirse de un extremo al otro de la grieta aunque el umbral la haya
-    # partido por el camino.
     esqueleto = podar_espolones(
         esqueletizar(cv2.bitwise_or(mascara, puentes)),
         longitud_minima=int(obtener(config, "medicion.poda_espolones_px", 12)),
@@ -1063,43 +981,18 @@ def _medir_sobre(
             motivo="La region aislada es demasiado compacta para tener un eje medible.",
         )
 
-    # El resultado de distanceTransform en un punto es su distancia al fondo mas
-    # cercano, es decir, el radio de la fisura ahi. El ancho es el doble.
     distancias = cv2.distanceTransform(mascara, cv2.DIST_L2, 5)
-    # El ancho se mide SOLO donde se observo fisura, nunca sobre los puentes:
-    # ahi no se vio nada, solo se infirio que la grieta continuaba, y asignarles
-    # un ancho seria inventarlo. Contarlos hundiria ademas el ancho medio, porque
-    # su distancia al fondo es cero.
-    puntos = np.argwhere((esqueleto > 0) & (mascara > 0))  # filas (y, x)
+    puntos = np.argwhere((esqueleto > 0) & (mascara > 0))
     if len(puntos) < 2:
         puntos = np.argwhere(esqueleto > 0)
     anchos = 2.0 * distancias[puntos[:, 0], puntos[:, 1]]
 
-    # Correccion del sesgo de segmentacion.
-    #
-    # La mascara es sistematicamente mas ancha que la fisura: el cierre
-    # morfologico anade un pixel por lado y el umbral incluye la transicion del
-    # borde. Medido sobre lineas sinteticas de ancho conocido, el sesgo resulto
-    # ser una CONSTANTE, no un porcentaje:
-    #
-    #     ancho real   3     5     7     9    11
-    #     medido       6.00  8.00 10.00 12.00 14.00
-    #     sesgo       +3.00 +3.00 +3.00 +3.00 +3.00
-    #
-    # Que sea constante es lo que permite corregirlo restando. Y que importe es
-    # evidente en el extremo del rango: sin corregir, una fisura de 3 px se
-    # reporta con el doble de su ancho, y ese es justo el tamano donde la
-    # diferencia entre "capilar" y "grieta" se decide.
     sesgo = float(obtener(config, "medicion.sesgo_ancho_px", 3.0))
     anchos = np.maximum(anchos - sesgo, 0.0)
 
     indice_ancho = int(np.argmax(anchos))
     punto_ancho = (int(puntos[indice_ancho, 1]), int(puntos[indice_ancho, 0]))
 
-    # La longitud de la grieta es su TRAYECTORIA PRINCIPAL, no la suma de todo el
-    # eje. Una fisura sobre panete arrastra la textura del material y su eje sale
-    # con decenas de ramas laterales; sumarlas responderia a "cuanto material
-    # fisurado hay" y no a "cuanto mide esta grieta".
     longitud, extremo_a, extremo_b = camino_principal(esqueleto)
     longitud_total = _longitud_del_eje(esqueleto)
 
@@ -1107,19 +1000,11 @@ def _medir_sobre(
     extremos = [(int(x), int(y)) for y, x in np.argwhere(vecinos == 1)]
     indice_ramificacion = float(longitud_total / longitud) if longitud > 1e-6 else 1.0
 
-    # Tortuosidad sobre la trayectoria principal: cuanto serpentea respecto a la
-    # linea recta que une sus dos extremos. Vale 1.0 en una grieta recta y no
-    # puede bajar de ahi, lo que la convierte en una comprobacion de coherencia:
-    # un valor menor que 1 delata que se esta midiendo un conjunto de fragmentos
-    # y no una fisura conectada.
     separacion = math.dist(extremo_a, extremo_b)
     tortuosidad = float(longitud / separacion) if separacion > 1e-6 else 0.0
 
     orientacion = _orientacion_principal(mascara)
 
-    # La conversion se hace UNA sola vez y solo si hay escala. No hay valor por
-    # defecto ni estimacion: sin marcador, los campos en milimetros quedan en
-    # None y quien los lea sabe que ese dato no existe.
     convertir = (
         (lambda px: float(px) * escala_mm_por_px) if escala_mm_por_px else (lambda _px: None)
     )
@@ -1246,12 +1131,6 @@ def medir_grieta(
     mascara, puentes, fragmentos = segmentar_grieta(imagen, config)
     medidas = _medir_sobre(mascara, puentes, fragmentos, config, escala_mm_por_px)
 
-    # Los dos detectores se turnan segun la pared, y cual gana no se puede saber
-    # de antemano: el de crestas recupera fisuras finas que Otsu funde con la
-    # textura -en dos fotografias del conjunto, Otsu no encontraba nada y este
-    # las mide-, pero sobre una pared lisa y bien iluminada Otsu sigue el trazo
-    # mas lejos. Se miden los dos y se conserva el recorrido mas largo que
-    # ademas sea verosimil; ninguno puede empeorar al otro, solo mejorarlo.
     if (obtener(config, "medicion.cresta", {}) or {}).get("activo", True):
         otro = {
             **config,
@@ -1308,12 +1187,10 @@ def _orientacion_principal(mascara: np.ndarray) -> float | None:
         return None
 
     centradas = puntos - puntos.mean(axis=0)
-    # columnas (x) como eje horizontal, filas (y) como vertical
     coords = np.stack([centradas[:, 1], centradas[:, 0]], axis=1)
     _, _, vt = np.linalg.svd(coords, full_matrices=False)
     dx, dy = vt[0]
     angulo = math.degrees(math.atan2(dy, dx))
-    # Una recta y la misma recta girada 180 grados son la misma recta.
     if angulo >= 90.0:
         angulo -= 180.0
     if angulo < -90.0:
@@ -1379,8 +1256,6 @@ def anotar_medidas(
         lienzo = cv2.cvtColor(lienzo, cv2.COLOR_GRAY2BGR)
 
     if mascara is not None and medidas.detectada:
-        # La fisura se tine de naranja translucido: se ve la mascara y tambien la
-        # textura que hay debajo, que es lo que permite juzgar si acerto.
         capa = lienzo.copy()
         capa[mascara > 0] = (40, 170, 250)
         lienzo = cv2.addWeighted(capa, 0.45, lienzo, 0.55, 0)
@@ -1389,7 +1264,6 @@ def anotar_medidas(
         esqueleto = podar_espolones(esqueletizar(completa))
         lienzo[(esqueleto > 0) & (mascara > 0)] = (30, 30, 220)
         if puentes is not None:
-            # Amarillo para lo inferido: sobre estos tramos no se observo fisura.
             lienzo[(esqueleto > 0) & (mascara == 0)] = (60, 230, 250)
 
     if medidas.punto_mas_ancho is not None:
@@ -1400,9 +1274,6 @@ def anotar_medidas(
         cv2.circle(lienzo, extremo, 3, (60, 220, 60), -1, cv2.LINE_AA)
 
     texto = medidas.resumen() if medidas.detectada else (medidas.motivo or "Sin fisura medible")
-    # La fuente de OpenCV solo cubre ASCII: cualquier otro caracter sale como
-    # interrogantes. Se transliteran los acentos y se sustituyen los separadores
-    # tipograficos, en lugar de dejar que la anotacion salga ilegible.
     texto = (
         unicodedata.normalize("NFKD", texto.replace("·", "|"))
         .encode("ascii", "ignore")

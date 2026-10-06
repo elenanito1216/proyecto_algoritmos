@@ -56,8 +56,6 @@ def _energia_alta_frecuencia(lote: np.ndarray) -> float:
 
 
 def test_en_inferencia_no_modifica_nada():
-    # La otra mitad del contrato: una capa de aumento que actuara en inferencia
-    # haria que la misma imagen diera predicciones distintas en cada llamada.
     capa = construir_capa_degradacion(4.0, 1.0)
     lote = _lote_con_detalle_fino()
     salida = capa(tf.constant(lote), training=False)
@@ -73,8 +71,6 @@ def test_en_entrenamiento_destruye_detalle_fino():
 
 
 def test_conserva_la_forma_del_lote():
-    # El tensor tiene que seguir encajando en el modelo: la degradacion es un
-    # viaje de ida y vuelta, no un cambio de resolucion de entrada.
     capa = construir_capa_degradacion(4.0, 1.0)
     lote = _lote_con_detalle_fino(n=3, lado=160)
     assert tuple(np.asarray(capa(tf.constant(lote), training=True)).shape) == (3, 160, 160, 3)
@@ -88,11 +84,6 @@ def test_conserva_el_rango_de_valores():
 
 
 def test_un_factor_mayor_degrada_mas():
-    # El factor concreto se sortea uniformemente en [1, factor_maximo], asi que
-    # comparar un unico sorteo de cada capa seria una prueba inestable: un sorteo
-    # afortunado de la capa "fuerte" puede caer en 1.1 y quedar por encima de uno
-    # de la "suave". Lo que la capa garantiza es una propiedad de la DISTRIBUCION,
-    # y por eso se compara la mediana de varias realizaciones.
     lote = tf.constant(_lote_con_detalle_fino())
 
     def energia_mediana(factor_maximo: float, repeticiones: int = 15) -> float:
@@ -116,16 +107,12 @@ def test_probabilidad_cero_deja_el_lote_intacto():
 
 
 def test_factor_uno_deja_el_lote_intacto():
-    # Es el caso que produce `--degradacion-escala 1.0`: desactivar sin tener que
-    # tocar el YAML.
     capa = construir_capa_degradacion(1.0, 1.0)
     lote = _lote_con_detalle_fino()
     np.testing.assert_allclose(np.asarray(capa(tf.constant(lote), training=True)), lote)
 
 
 def test_la_probabilidad_intermedia_deja_pasar_algunos_lotes():
-    # Con probabilidad 0.5 debe haber lotes tocados y lotes intactos. Si siempre
-    # degradara, el modelo perderia la capacidad de leer grietas nitidas.
     capa = construir_capa_degradacion(4.0, 0.5)
     lote = _lote_con_detalle_fino()
     energias = [
@@ -161,9 +148,6 @@ def test_se_integra_en_la_capa_de_aumento_solo_si_esta_activa():
 
 
 def test_va_antes_que_los_ajustes_fotometricos():
-    # El orden codifica una hipotesis fisica: la camara capturo la escena a menor
-    # resolucion, y el contraste y el brillo actuan sobre lo que la camara
-    # entrego. Invertirlo simularia algo que no ocurre.
     capa = construir_capa_aumento(
         {
             "proyecto": {"semilla": 42},
@@ -188,8 +172,6 @@ def test_va_antes_que_los_ajustes_fotometricos():
 
 
 def test_la_capa_se_puede_serializar():
-    # Sin get_config, guardar el modelo entrenado fallaria al final del
-    # entrenamiento, despues de gastar todo el tiempo de CPU.
     capa = construir_capa_degradacion(4.0, 0.5)
     configuracion = capa.get_config()
     assert configuracion["factor_maximo"] == 4.0

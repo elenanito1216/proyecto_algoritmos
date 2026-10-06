@@ -11,10 +11,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# La raiz del repositorio es la carpeta que contiene ``config.yaml``.
-# Se calcula subiendo desde este archivo (src/utils/rutas.py -> src/utils ->
-# src -> raiz), en lugar de depender de Path.cwd(), que cambia segun desde
-# donde se invoque el script o el notebook.
 RAIZ_PROYECTO: Path = Path(__file__).resolve().parents[2]
 
 

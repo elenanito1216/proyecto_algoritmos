@@ -161,8 +161,6 @@ def detectar_escala(imagen_bgr: np.ndarray, config: dict[str, Any]) -> Referenci
             ),
         )
 
-    # Si hay varios, se usa el mayor: es el mas cercano a la camara y el que
-    # menos error relativo introduce al medir su lado.
     mejor = max(range(len(esquinas)), key=lambda i: cv2.contourArea(esquinas[i].reshape(4, 2)))
     puntos = esquinas[mejor].reshape(4, 2).astype(np.float64)
 
@@ -230,8 +228,6 @@ def aviso_por_lejania(
     x0, y0, x1, y1 = region
     centro_region = ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
     separacion = math.dist(referencia.centro, centro_region)
-    # Se expresa en lados de marcador: es la unidad natural aqui, porque el error
-    # de perspectiva depende de la separacion relativa al tamano conocido.
     lados_de_distancia = separacion / max(referencia.lado_px, 1.0)
     limite = float(obtener(config, "escala.lados_maximos_de_distancia", 6.0))
 

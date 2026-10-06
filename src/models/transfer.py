@@ -69,12 +69,7 @@ def construir_transfer(config: dict[str, Any], base_entrenable: bool = False) ->
     base.trainable = base_entrenable
 
     entradas = tf.keras.Input(shape=(alto, ancho, canales), name="imagen")
-    # El pipeline entrega [0,1]; MobileNetV2 espera [-1,1]. y = 2x - 1.
     x = tf.keras.layers.Rescaling(2.0, offset=-1.0, name="preproceso_mobilenet")(entradas)
-    # training=False mantiene BatchNormalization en modo inferencia mientras la
-    # base esta congelada. Omitirlo es el error clasico de transfer learning:
-    # las estadisticas de BN se actualizarian con el nuevo dominio y destruirian
-    # los pesos preentrenados aunque 'trainable' sea False.
     x = base(x, training=False)
     x = tf.keras.layers.GlobalAveragePooling2D(name="gap")(x)
     x = tf.keras.layers.Dropout(dropout, name="dropout1")(x)

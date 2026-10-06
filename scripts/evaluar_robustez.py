@@ -94,9 +94,9 @@ def generar_vistas(lote: np.ndarray, n_vistas: int) -> list[np.ndarray]:
     """
     vistas = [lote]
     if n_vistas >= 4:
-        vistas.append(lote[:, :, ::-1, :])  # volteo horizontal
-        vistas.append(lote[:, ::-1, :, :])  # volteo vertical
-        vistas.append(lote[:, ::-1, ::-1, :])  # giro de 180 grados
+        vistas.append(lote[:, :, ::-1, :])
+        vistas.append(lote[:, ::-1, :, :])
+        vistas.append(lote[:, ::-1, ::-1, :])
     if n_vistas >= 8:
         girado = np.rot90(lote, k=1, axes=(1, 2))
         vistas.append(girado)
@@ -317,9 +317,6 @@ def main() -> int:
                 f"{m_cal['matriz_confusion']['fn']:>5}"
             )
 
-        # Cota superior: el mejor umbral posible SOBRE ESTAS MISMAS fotos. No es
-        # un resultado utilizable (seria circular), sino el techo que marca
-        # cuanto margen deja la recalibracion.
         rejilla = np.unique(np.concatenate([prob, [0.0, 1.0]]))
         mejor = max(rejilla, key=lambda u: met.calcular_metricas(y_propias, prob, u)["f1"])
         fila["oraculo_en_propias"] = {
@@ -348,7 +345,7 @@ def main() -> int:
         ("Ensemble + TTA8", 8, [etiqueta_base, etiqueta_transfer]),
     ):
         vistas = generar_vistas(muestra, n_vistas)
-        for _ in range(5):  # calentamiento
+        for _ in range(5):
             for m in usados:
                 for v in vistas:
                     modelos[m](v, training=False)

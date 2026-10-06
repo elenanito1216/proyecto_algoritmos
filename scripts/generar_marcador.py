@@ -139,8 +139,6 @@ def generar_hoja(lado_mm: float, identificador: int, dpi: int, diccionario: str)
     ancho = max(lado_px + margen * 2, milimetros_a_pixeles(90.0, dpi))
     hoja = np.full((alto, ancho, 3), 255, dtype=np.uint8)
 
-    # El marcador necesita un borde blanco a su alrededor para que el detector
-    # encuentre su contorno; recortarlo al ras lo haria indetectable.
     x0, y0 = (ancho - lado_px) // 2, margen
     hoja[y0 : y0 + lado_px, x0 : x0 + lado_px] = cv2.cvtColor(marcador, cv2.COLOR_GRAY2BGR)
 
@@ -202,13 +200,12 @@ def guardar_pdf(hoja: np.ndarray, dpi: int, destino: Path) -> Path:
     alto_px, ancho_px = hoja.shape[:2]
     alto_pulg, ancho_pulg = alto_px / dpi, ancho_px / dpi
 
-    # Hoja carta, con la imagen centrada arriba y a su tamano exacto.
     carta = (8.5, 11.0)
     figura = plt.figure(figsize=carta, dpi=dpi)
     izquierda = (carta[0] - ancho_pulg) / 2.0 / carta[0]
     abajo = 1.0 - (0.6 + alto_pulg) / carta[1]
     ejes = figura.add_axes((izquierda, abajo, ancho_pulg / carta[0], alto_pulg / carta[1]))
-    ejes.imshow(hoja[:, :, ::-1])  # BGR -> RGB
+    ejes.imshow(hoja[:, :, ::-1])
     ejes.axis("off")
 
     figura.savefig(destino, format="pdf")

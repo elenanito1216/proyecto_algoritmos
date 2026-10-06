@@ -20,9 +20,6 @@ import argparse
 import sys
 from pathlib import Path
 
-# La raiz del repo debe estar en sys.path antes de importar 'src'. Se hace aqui,
-# en el punto de entrada, y no dentro de los modulos: un modulo que manipula
-# sys.path es un modulo que no se puede importar con seguridad desde otro sitio.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data.loader import (  # noqa: E402
@@ -109,8 +106,6 @@ def main() -> int:
     print("\n[1/5] Cargando datos")
     datasets, inventarios = cargar_particiones(config, subset=args.subset, batch_size=batch)
 
-    # Los conjuntos de train y val se repiten indefinidamente, asi que Keras
-    # necesita saber cuantos lotes componen una epoca.
     pasos_train = pasos_por_epoca(inventarios["train"], batch)
     pasos_val = pasos_por_epoca(inventarios["val"], batch)
 
@@ -190,8 +185,6 @@ def main() -> int:
     print(f"  Resumen  -> {ruta_resumen}")
 
     print("\n[5/5] Evaluacion rapida sobre validacion")
-    # take(pasos_val) acota el dataset de validacion, que se repite de forma
-    # indefinida: sin el, el bucle de prediccion no terminaria nunca.
     y_true, y_prob = met.predecir(modelo, datasets["val"].take(pasos_val))
     umbral = float(obtener(config, "evaluacion.umbral", 0.5))
     resultado = met.calcular_metricas(y_true, y_prob, umbral)

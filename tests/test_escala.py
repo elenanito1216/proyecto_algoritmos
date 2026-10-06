@@ -88,13 +88,7 @@ def _escena(
     return escena
 
 
-# ---------------------------------------------------------------------------
-# Deteccion
-# ---------------------------------------------------------------------------
-
-
 def test_detecta_el_marcador_y_calcula_la_equivalencia():
-    # 200 px de marcador que en la realidad miden 50 mm -> 0.25 mm por pixel.
     referencia = detectar_escala(_escena(lado_marcador_px=200), CONFIG)
 
     assert referencia.detectada
@@ -104,15 +98,12 @@ def test_detecta_el_marcador_y_calcula_la_equivalencia():
 
 
 def test_un_marcador_mas_pequeno_implica_mas_milimetros_por_pixel():
-    # Fotografiar desde mas lejos hace el marcador mas pequeno en la imagen, y
-    # entonces cada pixel abarca mas distancia real.
     cerca = detectar_escala(_escena(lado_marcador_px=300), CONFIG)
     lejos = detectar_escala(_escena(lado_marcador_px=120), CONFIG)
     assert lejos.mm_por_px > cerca.mm_por_px
 
 
 def test_sin_marcador_lo_dice_en_vez_de_estimar():
-    # Es la garantia central del modulo: nunca inventar una escala.
     referencia = detectar_escala(np.full((400, 400, 3), 210, np.uint8), CONFIG)
     assert not referencia.detectada
     assert referencia.mm_por_px is None
@@ -142,15 +133,7 @@ def test_un_diccionario_inexistente_falla_de_forma_explicita():
         detectar_escala(_escena(), config_malo)
 
 
-# ---------------------------------------------------------------------------
-# Deteccion de las condiciones que invalidan la medida
-# ---------------------------------------------------------------------------
-
-
 def test_avisa_cuando_la_foto_se_tomo_en_angulo():
-    # La perspectiva es la principal fuente de error de este metodo: si el
-    # marcador se ve deformado, un pixel no representa la misma distancia en toda
-    # la imagen y la conversion deja de valer.
     escena = _escena(lado_marcador_px=240, posicion=(120, 120), tamano=(700, 700))
     origen = np.float32([[120, 120], [360, 120], [360, 360], [120, 360]])
     destino = np.float32([[120, 120], [360, 175], [360, 330], [120, 360]])
@@ -179,7 +162,6 @@ def test_avisa_cuando_el_marcador_es_muy_pequeno_en_el_encuadre():
 
 def test_avisa_cuando_el_marcador_esta_lejos_de_la_grieta():
     referencia = detectar_escala(_escena(lado_marcador_px=120, posicion=(20, 20)), CONFIG)
-    # Una region en la esquina opuesta de una escena de 700x700.
     aviso = aviso_por_lejania(referencia, (600, 600, 690, 690), CONFIG)
     assert aviso is not None and "marcador" in aviso
 
@@ -193,27 +175,13 @@ def test_sin_referencia_no_hay_aviso_de_lejania():
     assert aviso_por_lejania(ReferenciaEscala(detectada=False), (0, 0, 10, 10), CONFIG) is None
 
 
-# ---------------------------------------------------------------------------
-# Ida y vuelta: de una fisura de ancho conocido a milimetros
-# ---------------------------------------------------------------------------
-
-
 def test_convierte_a_milimetros_una_fisura_de_ancho_conocido():
-    # ESTA ES LA PRUEBA CENTRAL DEL MODULO.
-    #
-    #   marcador de 200 px = 50 mm   ->   1 px = 0.25 mm
-    #   fisura de 8 px de ancho      ->   2.0 mm
-    #
-    # Si el sistema dice otra cosa, el milimetraje que reportaria en una
-    # inspeccion real seria igual de erroneo, y con el mismo aspecto de correcto.
     escena = _escena(lado_marcador_px=200, posicion=(30, 30), tamano=(700, 700))
     cv2.line(escena, (450, 80), (450, 620), (35, 35, 35), 8, cv2.LINE_8)
 
     referencia = detectar_escala(escena, CONFIG)
     assert referencia.detectada
 
-    # El recorte excluye el marcador, igual que ocurre en uso real: la escala se
-    # detecta en la foto completa y la fisura se mide en la ventana localizada.
     recorte = escena[60:640, 350:560]
     medidas = medir_grieta(recorte, CONFIG, escala_mm_por_px=referencia.mm_por_px)
 
@@ -251,11 +219,6 @@ def test_el_resumen_usa_milimetros_cuando_los_hay():
     assert "mm" in medir_grieta(escena, CONFIG, escala_mm_por_px=0.25).resumen()
 
 
-# ---------------------------------------------------------------------------
-# Anotacion
-# ---------------------------------------------------------------------------
-
-
 def test_la_anotacion_conserva_el_tamano_y_no_toca_el_original():
     escena = _escena(lado_marcador_px=200)
     copia = escena.copy()
@@ -277,16 +240,11 @@ def test_el_resumen_de_la_referencia_es_legible_en_ambos_casos():
 
 
 def test_un_borde_blanco_generoso_no_altera_la_medida():
-    # Medido sobre tres fondos: con 0 mm de borde o con 4 mm o mas, el lado se
-    # mide con un 0.4% de error. Entre 1 y 3 mm el detector se agarra al filo del
-    # papel y llega a medir un 14% de mas, lo que haria reportar las grietas mas
-    # estrechas de lo que son. De ahi la instruccion impresa en la hoja de dejar
-    # 1 cm de blanco al recortar.
     lado = 200
     dicc = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
     marcador = cv2.cvtColor(cv2.aruco.generateImageMarker(dicc, 0, lado), cv2.COLOR_GRAY2BGR)
 
-    for borde in (0, 40):  # 0 mm y 10 mm equivalentes
+    for borde in (0, 40):
         hoja = np.full((lado + 2 * borde, lado + 2 * borde, 3), 255, np.uint8)
         hoja[borde : borde + lado, borde : borde + lado] = marcador
         escena = np.full((700, 700, 3), 120, np.uint8)

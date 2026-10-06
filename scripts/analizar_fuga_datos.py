@@ -62,8 +62,6 @@ from src.utils.config import cargar_config, obtener  # noqa: E402
 from src.utils.rutas import resolver  # noqa: E402
 from src.utils.semillas import fijar_semillas  # noqa: E402
 
-# Tabla de popcount para bytes: cuantos bits a 1 tiene cada valor 0-255.
-# Permite calcular distancias de Hamming vectorizadas sobre arreglos enteros.
 _POPCOUNT = np.array([bin(i).count("1") for i in range(256)], dtype=np.uint8)
 
 
@@ -143,8 +141,6 @@ def verificar_par(ruta_a: Path, ruta_b: Path, umbral_correlacion: float) -> dict
     vb = b.ravel().astype(np.float64)
     mae = float(np.abs(va - vb).mean())
 
-    # Una imagen completamente plana no tiene varianza y la correlacion no esta
-    # definida; en ese caso se decide por diferencia absoluta.
     if va.std() < 1e-9 or vb.std() < 1e-9:
         correlacion = 1.0 if mae < 1.0 else 0.0
     else:
@@ -175,8 +171,6 @@ def calcular_phash(ruta: Path, lado: int = 32) -> np.uint64 | None:
     reducida = cv2.resize(imagen, (lado, lado), interpolation=cv2.INTER_AREA)
     transformada = cv2.dct(np.float32(reducida))
 
-    # Bloque de bajas frecuencias, sin el coeficiente DC: este solo codifica el
-    # brillo medio, y conservarlo haria el hash sensible a la exposicion.
     bloque = transformada[:8, :8].flatten()[1:]
     bits = bloque > np.median(bloque)
 
@@ -246,10 +240,7 @@ def distancia_minima_cruzada(
 
     for inicio in range(0, n, bloque):
         fin = min(inicio + bloque, n)
-        # XOR de cada consulta contra toda la referencia: los bits a 1 del
-        # resultado son exactamente los bits en que ambos hashes difieren.
         xor = consulta[inicio:fin, None] ^ referencia[None, :]
-        # popcount vectorizado: se ve el uint64 como 8 bytes y se suma la tabla.
         bytes_xor = xor.view(np.uint8).reshape(fin - inicio, len(referencia), 8)
         hamming = _POPCOUNT[bytes_xor].sum(axis=2)
 
@@ -404,10 +395,6 @@ def main() -> int:
         "n_contaminadas": n_confirmados,
         "n_limpias": int((~contaminadas).sum()),
         "pct_contaminado": round(100 * float(contaminadas.mean()), 4),
-        # Lista completa (no truncada) para que otros scripts puedan reconstruir
-        # el conjunto depurado sin volver a hashear las 58.000 imagenes. Los
-        # indices se refieren al inventario de prueba, que es reproducible con
-        # la semilla de config.yaml.
         "indices_en_inventario": sorted(
             int(validos["test"][p]) for p in np.flatnonzero(contaminadas)
         ),
@@ -480,9 +467,6 @@ def _reevaluar_sin_contaminadas(
             )
             continue
 
-        # Verificacion de alineamiento: las etiquetas almacenadas deben coincidir
-        # con las del inventario reconstruido. Si no, el orden no es el mismo y
-        # cualquier filtrado por indice seria incorrecto.
         if not np.array_equal(y_true, inventario_test.etiquetas.astype(int)):
             print(f"  {nombre}: las etiquetas no coinciden con el inventario. Se omite.")
             continue

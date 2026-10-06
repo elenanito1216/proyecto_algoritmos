@@ -21,15 +21,9 @@ from __future__ import annotations
 
 from typing import Any
 
-# --------------------------------------------------------------------------- #
-# Paleta
-# --------------------------------------------------------------------------- #
+ACENTO_PRIMARIO = "#22B8CF"
+ACENTO_SECUNDARIO = "#F59E0B"
 
-ACENTO_PRIMARIO = "#22B8CF"  # cian: elementos interactivos y acentos de marca
-ACENTO_SECUNDARIO = "#F59E0B"  # ambar: avisos y llamadas de atencion
-
-# Colores de nivel de riesgo. Elegidos con suficiente contraste sobre blanco y
-# sobre negro para que el mismo valor funcione en ambos temas.
 COLOR_BAJO = "#16A34A"
 COLOR_MEDIO = "#D97706"
 COLOR_ALTO = "#DC2626"
@@ -247,11 +241,6 @@ def inyectar_estilos(st: Any) -> None:
     st.markdown(css(), unsafe_allow_html=True)
 
 
-# --------------------------------------------------------------------------- #
-# Componentes HTML
-# --------------------------------------------------------------------------- #
-
-
 def cabecera(titulo: str, subtitulo: str, icono: str = "🏗️") -> str:
     """Construye la cabecera principal del panel.
 
@@ -390,8 +379,6 @@ def plantilla_plotly() -> dict[str, Any]:
     return {
         "paper_bgcolor": "white",
         "plot_bgcolor": "white",
-        # El titulo no se fija aqui: cada figura lo pone con title="...", lo que
-        # sustituye el objeto entero. Hereda el color de "font", que si persiste.
         "font": {"color": tinta, "size": 12},
         "xaxis": dict(rejilla),
         "yaxis": dict(rejilla),

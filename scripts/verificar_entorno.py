@@ -17,7 +17,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Modulos criticos: (nombre de import, nombre para mostrar, atributo de version)
 DEPENDENCIAS: list[tuple[str, str, str]] = [
     ("numpy", "NumPy", "__version__"),
     ("pandas", "Pandas", "__version__"),
@@ -58,10 +57,6 @@ def _verificar_interprete() -> bool:
             "           Windows  : .\\.venv\\Scripts\\Activate.ps1\n"
             "           Linux/Mac: source .venv/bin/activate"
         )
-    # Ruff marca esta comprobacion como redundante porque el proyecto declara
-    # target-version = py311. Se conserva a proposito: este script existe
-    # precisamente para diagnosticar el caso en que alguien lo ejecuta con un
-    # interprete equivocado, que es cuando la comprobacion sirve de algo.
     if sys.version_info < (3, 10):  # noqa: UP036
         print(f"  {MARCA_FALLO} Se requiere Python 3.10 o superior.")
         return False
@@ -86,7 +81,7 @@ def _verificar_dependencias() -> list[str]:
             importado = importlib.import_module(modulo)
             version = getattr(importado, atributo, "?")
             print(f"  {MARCA_OK} {nombre:<14} {version}")
-        except Exception as error:  # noqa: BLE001 - se quiere reportar cualquier fallo
+        except Exception as error:  # noqa: BLE001
             print(f"  {MARCA_FALLO} {nombre:<14} {type(error).__name__}: {error}")
             fallidas.append(nombre)
     return fallidas

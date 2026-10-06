@@ -89,11 +89,6 @@ def _con_grieta(puntos: list[tuple[int, int]], grosor: int = 5, lado: int = 320)
     return imagen
 
 
-# ---------------------------------------------------------------------------
-# Segmentacion
-# ---------------------------------------------------------------------------
-
-
 def test_aisla_una_grieta_sobre_pared_limpia():
     mascara, _, _ = segmentar_grieta(_con_grieta([(60, 20), (60, 300)]), CONFIG)
     assert (mascara > 0).sum() > 500
@@ -105,8 +100,6 @@ def test_una_pared_sana_no_produce_mascara():
 
 
 def test_descarta_una_mancha_compacta():
-    # Un desconchado es oscuro pero no es fino ni alargado: debe rechazarse por
-    # el filtro de elongacion y el de relleno de su caja envolvente.
     imagen = _pared()
     cv2.circle(imagen, (160, 160), 45, (40, 40, 40), -1)
     mascara, _, _ = segmentar_grieta(imagen, CONFIG)
@@ -114,9 +107,6 @@ def test_descarta_una_mancha_compacta():
 
 
 def test_descarta_una_fisura_lejana_y_sin_relacion():
-    # Dos fisuras en lados opuestos del encuadre: se mide la dominante y la otra
-    # se cuenta aparte. Lo que NO debe ocurrir es que se unan y se midan como si
-    # fueran una sola, porque el recorrido resultante no describiria nada real.
     imagen = _con_grieta([(40, 20), (40, 300)])
     cv2.line(imagen, (280, 120), (280, 180), (35, 35, 35), 5)
     mascara, _, descartados = segmentar_grieta(imagen, CONFIG)
@@ -127,12 +117,9 @@ def test_descarta_una_fisura_lejana_y_sin_relacion():
 
 
 def test_une_los_fragmentos_de_una_misma_fisura():
-    # ESTE ES EL FALLO QUE MOTIVO LA UNION. Una fisura real se segmenta partida
-    # donde se afina o la luz la disimula. Quedarse con el trozo mayor reportaba
-    # 969 px en una grieta que medía mas del doble.
     imagen = _pared(lado=400)
-    cv2.line(imagen, (200, 20), (200, 170), (35, 35, 35), 5)  # trozo de arriba
-    cv2.line(imagen, (200, 185), (200, 380), (35, 35, 35), 5)  # trozo de abajo
+    cv2.line(imagen, (200, 20), (200, 170), (35, 35, 35), 5)
+    cv2.line(imagen, (200, 185), (200, 380), (35, 35, 35), 5)
     medidas = medir_grieta(imagen, CONFIG)
 
     assert medidas.detectada
@@ -141,15 +128,11 @@ def test_une_los_fragmentos_de_una_misma_fisura():
 
 
 def test_lo_inferido_se_contabiliza_aparte():
-    # Quien lea la medida tiene derecho a saber cuanto se observo y cuanto se
-    # dedujo. Sin fragmentar, no debe haber nada inferido.
     entera = medir_grieta(_con_grieta([(60, 40), (60, 280)]), CONFIG)
     assert entera.longitud_inferida_px == 0.0
 
 
 def test_los_puentes_no_alteran_el_ancho():
-    # El ancho se mide solo donde se observo fisura. Si los tramos cosidos
-    # contaran, hundirian el ancho medio: su distancia al fondo es cero.
     imagen = _pared(lado=400)
     cv2.line(imagen, (200, 20), (200, 170), (35, 35, 35), 9)
     cv2.line(imagen, (200, 185), (200, 380), (35, 35, 35), 9)
@@ -157,16 +140,10 @@ def test_los_puentes_no_alteran_el_ancho():
     assert medidas.ancho_medio_px == pytest.approx(9, abs=2.0)
 
 
-# ---------------------------------------------------------------------------
-# Esqueleto y poda
-# ---------------------------------------------------------------------------
-
-
 def test_el_esqueleto_adelgaza_a_un_pixel():
     mascara = np.zeros((120, 120), np.uint8)
     cv2.line(mascara, (20, 60), (100, 60), 255, 9)
     eje = esqueletizar(mascara)
-    # Una banda de 9 px de grosor y 80 de largo debe quedar en ~80 px de eje.
     assert 60 <= (eje > 0).sum() <= 110
 
 
@@ -180,8 +157,8 @@ def test_el_esqueleto_no_parte_la_figura_en_dos():
 
 def test_la_poda_elimina_una_pua_corta():
     eje = np.zeros((80, 80), np.uint8)
-    cv2.line(eje, (10, 40), (70, 40), 255, 1)  # eje principal
-    cv2.line(eje, (40, 40), (40, 34), 255, 1)  # pua de 6 px
+    cv2.line(eje, (10, 40), (70, 40), 255, 1)
+    cv2.line(eje, (40, 40), (40, 34), 255, 1)
     antes = int((eje > 0).sum())
     podado = podar_espolones(eje, longitud_minima=12)
     assert int((podado > 0).sum()) < antes
@@ -190,14 +167,9 @@ def test_la_poda_elimina_una_pua_corta():
 def test_la_poda_respeta_una_rama_larga():
     eje = np.zeros((120, 120), np.uint8)
     cv2.line(eje, (10, 60), (110, 60), 255, 1)
-    cv2.line(eje, (60, 60), (60, 15), 255, 1)  # rama de 45 px: es real
+    cv2.line(eje, (60, 60), (60, 15), 255, 1)
     podado = podar_espolones(eje, longitud_minima=12)
     assert int((podado > 0).sum()) >= int((eje > 0).sum()) - 4
-
-
-# ---------------------------------------------------------------------------
-# Trayectoria principal
-# ---------------------------------------------------------------------------
 
 
 def test_la_trayectoria_principal_mide_la_recta_completa():
@@ -208,7 +180,6 @@ def test_la_trayectoria_principal_mide_la_recta_completa():
 
 
 def test_una_diagonal_mide_mas_que_su_proyeccion():
-    # Contar pixeles daria 100; la longitud real de una diagonal es 100*raiz(2).
     eje = np.zeros((160, 160), np.uint8)
     cv2.line(eje, (20, 20), (120, 120), 255, 1)
     longitud, _, _ = camino_principal(eje)
@@ -216,23 +187,16 @@ def test_una_diagonal_mide_mas_que_su_proyeccion():
 
 
 def test_la_trayectoria_principal_ignora_las_ramas_laterales():
-    # ESTE ES EL FALLO QUE MOTIVO LA FUNCION. Sumar todo el eje daba 1544 px y
-    # una tortuosidad de 8.51 en una grieta que medía unos 600.
     eje = np.zeros((160, 220), np.uint8)
-    cv2.line(eje, (20, 80), (200, 80), 255, 1)  # principal: 180 px
+    cv2.line(eje, (20, 80), (200, 80), 255, 1)
     for x in range(40, 190, 20):
-        cv2.line(eje, (x, 80), (x, 60), 255, 1)  # ramas de 20 px
+        cv2.line(eje, (x, 80), (x, 60), 255, 1)
     longitud, _, _ = camino_principal(eje)
     assert longitud == pytest.approx(180, abs=25), "se estan sumando las ramas"
 
 
 def test_un_eje_sin_puntos_no_revienta():
     assert camino_principal(np.zeros((40, 40), np.uint8))[0] == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Medidas
-# ---------------------------------------------------------------------------
 
 
 def test_mide_la_longitud_de_una_grieta_conocida():
@@ -254,9 +218,6 @@ def test_una_grieta_mas_ancha_se_mide_mas_ancha():
 
 
 def test_la_tortuosidad_nunca_baja_de_uno():
-    # COMPROBACION DE COHERENCIA. Una curva no puede ser mas corta que la recta
-    # entre sus extremos. Cuando esta funcion reportaba 0.25 estaba midiendo
-    # fragmentos sueltos como si fueran una sola fisura.
     casos = [
         [(60, 40), (60, 280)],
         [(40, 40), (280, 280)],
@@ -285,7 +246,7 @@ def test_una_grieta_en_zigzag_es_mas_tortuosa_que_una_recta():
 def test_el_indice_de_ramificacion_distingue_una_linea_de_un_arbol():
     recta = medir_grieta(_con_grieta([(60, 40), (60, 280)]), CONFIG)
     ramificada = medir_grieta(
-        _con_grieta([(60, 40), (60, 280)]) | np.zeros((320, 320, 3), np.uint8),  # copia
+        _con_grieta([(60, 40), (60, 280)]) | np.zeros((320, 320, 3), np.uint8),
         CONFIG,
     )
     assert recta.indice_ramificacion == pytest.approx(1.0, abs=0.35)
@@ -306,9 +267,6 @@ def test_una_pared_sana_no_produce_medidas():
 
 
 def test_nunca_inventa_una_escala_en_milimetros():
-    # Es la garantia central del modulo: sin referencia de tamano en la escena,
-    # los milimetros no se pueden conocer, y afirmarlos seria inventar la cifra
-    # mas importante del dictamen.
     medidas = medir_grieta(_con_grieta([(60, 40), (60, 280)]), CONFIG)
     assert medidas.escala_mm_por_px is None
 
@@ -316,11 +274,6 @@ def test_nunca_inventa_una_escala_en_milimetros():
 def test_acepta_una_imagen_en_escala_de_grises():
     gris = cv2.cvtColor(_con_grieta([(60, 40), (60, 280)]), cv2.COLOR_BGR2GRAY)
     assert medir_grieta(gris, CONFIG).detectada
-
-
-# ---------------------------------------------------------------------------
-# Clasificacion y anotacion
-# ---------------------------------------------------------------------------
 
 
 def test_clasifica_la_forma_de_una_grieta_recta_y_larga():
@@ -360,9 +313,6 @@ def test_el_resumen_es_legible_en_ambos_casos():
 
 
 def test_el_sesgo_de_ancho_esta_corregido():
-    # El sesgo se midio constante en +3.00 px sobre lineas sinteticas de ancho
-    # conocido. Esta prueba lo fija: si alguien cambia kernel_limpieza sin volver
-    # a calibrar, el ancho deja de ser fiable y aqui se ve.
     for grosor in (5, 7, 9, 11):
         medidas = medir_grieta(_con_grieta([(60, 40), (60, 280)], grosor=grosor), CONFIG)
         assert medidas.detectada, f"no detecto una fisura de {grosor} px"
@@ -372,9 +322,6 @@ def test_el_sesgo_de_ancho_esta_corregido():
 
 
 def test_mide_una_grieta_diagonal():
-    # Una fisura diagonal tiene la caja alineada con los ejes practicamente
-    # cuadrada. Filtrar sobre ella la rechazaria, y §4.4 identifica las grietas
-    # diagonales como las estructuralmente significativas en columnas.
     medidas = medir_grieta(_con_grieta([(40, 40), (280, 280)]), CONFIG)
     assert medidas.detectada, "se rechazo una grieta diagonal"
     assert medidas.longitud_px == pytest.approx(240 * math.sqrt(2), rel=0.2)
@@ -382,8 +329,6 @@ def test_mide_una_grieta_diagonal():
 
 
 def test_una_grieta_en_zigzag_se_detecta():
-    # Serpentear no la hace menos grieta: con el umbral de elongacion en 2.5 se
-    # rechazaba una cuya caja rotada medía 246x106.
     medidas = medir_grieta(
         _con_grieta([(60, 40), (160, 100), (60, 160), (160, 220), (60, 280)]), CONFIG
     )
@@ -391,20 +336,15 @@ def test_una_grieta_en_zigzag_se_detecta():
 
 
 def test_las_fisuras_demasiado_anchas_se_rechazan_en_vez_de_mentir():
-    # Con kernel_blackhat 15 el metodo deja de funcionar hacia los 13 px. Lo que
-    # importa es que falle declarandolo y no devolviendo una cifra inventada.
     medidas = medir_grieta(_con_grieta([(60, 40), (60, 280)], grosor=17), CONFIG)
     assert (not medidas.detectada) or medidas.ancho_medio_px > 0
 
 
 def test_rechaza_unir_fragmentos_cuando_el_resultado_no_parece_una_fisura():
-    # Trozos dispersos como los que produce la textura del panete: unirlos da un
-    # recorrido que serpentea muchas veces la distancia entre sus extremos, algo
-    # que ninguna grieta hace. Debe medirse solo el trozo dominante y decirlo.
     imagen = _pared(lado=420)
-    cv2.line(imagen, (60, 60), (60, 330), (35, 35, 35), 6)  # la fisura real
+    cv2.line(imagen, (60, 60), (60, 330), (35, 35, 35), 6)
     generador = np.random.default_rng(7)
-    for _ in range(14):  # maraña de trozos cortos y desordenados
+    for _ in range(14):
         x, y = int(generador.integers(180, 380)), int(generador.integers(40, 380))
         dx, dy = int(generador.integers(-45, 45)), int(generador.integers(-45, 45))
         cv2.line(imagen, (x, y), (x + dx, y + dy), (40, 40, 40), 4)
@@ -422,12 +362,9 @@ def test_una_fisura_limpia_no_activa_el_guardarrail():
 
 
 def test_descarta_una_malla_de_textura_y_se_queda_con_la_grieta():
-    # El filtro de maraña: una linea cumple area = largo x ancho; una red rellena
-    # una superficie y su cociente se dispara. Medido sobre la peor foto propia,
-    # la malla daba 23.1 y las grietas reales entre 1.7 y 2.5.
     imagen = _pared(lado=420)
-    cv2.line(imagen, (60, 40), (60, 380), (35, 35, 35), 7)  # la fisura
-    for desplazamiento in range(0, 160, 12):  # rejilla densa: textura
+    cv2.line(imagen, (60, 40), (60, 380), (35, 35, 35), 7)
+    for desplazamiento in range(0, 160, 12):
         cv2.line(imagen, (240, 60 + desplazamiento), (390, 60 + desplazamiento), (45, 45, 45), 3)
         cv2.line(imagen, (240 + desplazamiento, 60), (240 + desplazamiento, 220), (45, 45, 45), 3)
 
@@ -438,15 +375,10 @@ def test_descarta_una_malla_de_textura_y_se_queda_con_la_grieta():
 
 
 def test_una_nube_de_trocitos_de_textura_no_le_gana_a_la_fisura():
-    # ESTE ES EL FALLO QUE MOTIVO LA PUNTUACION POR RASGOS. La textura no se cuela
-    # como una mancha ancha -esa la caza el filtro de maraña- sino como decenas de
-    # trocitos finos y palidos que, cosidos, suman mas AREA que la fisura. Sobre la
-    # foto que lo destapo, la textura sumaba 5319 px y la grieta 546: por area, la
-    # pared ganaba siempre. Gana quien es largo, oscuro y de un solo trazo.
     generador = np.random.default_rng(7)
     imagen = _pared(lado=420)
-    cv2.line(imagen, (360, 30), (360, 390), (30, 30, 30), 3)  # la fisura: fina y oscura
-    for _ in range(45):  # nube de trocitos palidos repartidos por media pared
+    cv2.line(imagen, (360, 30), (360, 390), (30, 30, 30), 3)
+    for _ in range(45):
         x, y = int(generador.integers(40, 240)), int(generador.integers(40, 380))
         largo, angulo = int(generador.integers(18, 34)), float(generador.uniform(0, np.pi))
         fin = (x + int(largo * np.cos(angulo)), y + int(largo * np.sin(angulo)))
@@ -458,16 +390,6 @@ def test_una_nube_de_trocitos_de_textura_no_le_gana_a_la_fisura():
     assert xs.min() > 300, "se midio la textura de la pared en vez de la fisura"
 
 
-# ---------------------------------------------------------------------------
-# Deteccion por forma de cresta
-#
-# El black-hat pregunta "cuanto mas oscuro es esto que su entorno" y sobre un
-# pañete rugoso eso enciende media pared. Estas pruebas fijan lo que aporta el
-# filtro de crestas y, sobre todo, el filtro que lo hace utilizable: sin el,
-# mide el canto de la pared en vez de la fisura.
-# ---------------------------------------------------------------------------
-
-
 def test_la_cresta_responde_a_una_linea_y_no_a_una_mancha():
     linea = np.full((200, 200), 200, np.uint8)
     cv2.line(linea, (100, 20), (100, 180), 40, 3)
@@ -475,28 +397,18 @@ def test_la_cresta_responde_a_una_linea_y_no_a_una_mancha():
     cv2.circle(mancha, (100, 100), 40, 40, -1)
 
     assert respuesta_de_cresta(linea).max() > 0.5
-    # En una mancha solo responde el borde; el centro, que es lo que se mediria,
-    # queda mudo. Se comprueba ahi y no en el maximo global.
     assert respuesta_de_cresta(mancha)[90:110, 90:110].max() < 0.2
 
 
 def test_la_cresta_ignora_una_linea_clara_sobre_fondo_oscuro():
-    # Una junta de mortero clara no es una fisura: el signo de la curvatura la
-    # distingue, y sin esa comprobacion se medirian las dos. Se comprueba sobre
-    # el EJE de la linea: a los lados de una linea clara el fondo forma dos
-    # valles que si responden, y eso es correcto -son oscuros y alargados-, pero
-    # el trazo claro en si mismo no debe detectarse.
     imagen = np.full((200, 200), 60, np.uint8)
     cv2.line(imagen, (100, 20), (100, 180), 220, 3)
     assert respuesta_de_cresta(imagen)[20:180, 99:102].max() == 0.0
 
 
 def test_el_canto_entre_dos_paredes_se_distingue_de_una_fisura():
-    # ESTE ES EL FALLO QUE MOTIVO EL FILTRO. Por forma son iguales, y el canto es
-    # incluso mas largo y mas recto: el detector de crestas medía el canto.
-    # Lo que los separa es que el canto cambia el fondo al cruzarlo.
     canto = np.full((200, 200), 200, np.uint8)
-    canto[:, 100:] = 160  # dos superficies con luz distinta
+    canto[:, 100:] = 160
     cv2.line(canto, (100, 0), (100, 199), 40, 3)
     fisura = np.full((200, 200), 200, np.uint8)
     cv2.line(fisura, (100, 0), (100, 199), 40, 3)
@@ -509,9 +421,6 @@ def test_el_canto_entre_dos_paredes_se_distingue_de_una_fisura():
 
 
 def test_medir_se_queda_con_el_recorrido_mas_largo_de_los_dos_detectores():
-    # Los dos detectores se turnan segun la pared. Medir con ambos y quedarse con
-    # el mas largo que sea verosimil garantiza que ninguno empeore al otro:
-    # sobre las 30 fotos propias, 12 mejoran y ninguna baja.
     imagen = _con_grieta([(60, 40), (60, 280)])
     con_ambos = medir_grieta(imagen, CONFIG)
     solo_otsu = medir_grieta(

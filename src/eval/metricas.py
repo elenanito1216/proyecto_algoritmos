@@ -85,7 +85,6 @@ def calcular_metricas(
     matriz = confusion_matrix(y_verdad, y_pred, labels=[0, 1])
     vn, fp, fn, vp = (int(v) for v in matriz.ravel())
 
-    # AUC exige ambas clases presentes; con fotos propias puede no ocurrir.
     hay_dos_clases = len(np.unique(y_verdad)) == 2
     roc = float(roc_auc_score(y_verdad, y_prob)) if hay_dos_clases else None
     pr = float(average_precision_score(y_verdad, y_prob)) if hay_dos_clases else None
@@ -163,8 +162,6 @@ def buscar_umbral_para_recall(
     from sklearn.metrics import precision_recall_curve
 
     precision, recall, umbrales = precision_recall_curve(y_true.astype(int), y_prob)
-    # precision_recall_curve devuelve un punto extra (recall=0, precision=1) sin
-    # umbral asociado; se recorta para alinear los tres vectores.
     precision, recall = precision[:-1], recall[:-1]
 
     validos = np.flatnonzero(recall >= recall_objetivo)
@@ -177,7 +174,6 @@ def buscar_umbral_para_recall(
             "alcanzable": False,
         }
 
-    # Entre los umbrales que cumplen, el mayor es el que menos precision sacrifica.
     mejor = int(validos[np.argmax(umbrales[validos])])
     return {
         "umbral": float(umbrales[mejor]),
@@ -232,7 +228,6 @@ def analizar_falsos_negativos(
     probs_fn = y_prob[indices_fn]
     resultado["probabilidad_media_fn"] = float(np.mean(probs_fn))
     resultado["probabilidad_mediana_fn"] = float(np.median(probs_fn))
-    # Cuantos FN estan justo por debajo del umbral: recuperables bajandolo poco.
     resultado["fn_cerca_del_umbral"] = int((probs_fn >= umbral - 0.1).sum())
 
     orden = indices_fn[np.argsort(probs_fn)][:top_n]
@@ -246,11 +241,6 @@ def analizar_falsos_negativos(
         resultado["peores_casos"].append(caso)
 
     return resultado
-
-
-# --------------------------------------------------------------------------- #
-# Persistencia de artefactos
-# --------------------------------------------------------------------------- #
 
 
 def guardar_json(datos: dict[str, Any], ruta_relativa: str | Path) -> Path:
@@ -311,11 +301,6 @@ def guardar_historial(historial: dict[str, list[float]], ruta_relativa: str | Pa
     return destino
 
 
-# --------------------------------------------------------------------------- #
-# Figuras estaticas para el informe (Matplotlib / Seaborn)
-# --------------------------------------------------------------------------- #
-
-
 def figura_matriz_confusion(
     metricas: dict[str, Any], clases: list[str], titulo: str, ruta_relativa: str | Path
 ) -> Path:
@@ -332,7 +317,7 @@ def figura_matriz_confusion(
     """
     import matplotlib
 
-    matplotlib.use("Agg")  # backend sin ventana: los scripts corren sin GUI
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import seaborn as sns
 

@@ -47,9 +47,9 @@ def preparar_imagen(imagen_rgb: np.ndarray, config: dict[str, Any]) -> np.ndarra
     alto, ancho, _ = forma_entrada(config)
     imagen = np.asarray(imagen_rgb)
 
-    if imagen.ndim == 2:  # escala de grises -> replicar canales
+    if imagen.ndim == 2:
         imagen = np.stack([imagen] * 3, axis=-1)
-    if imagen.shape[-1] == 4:  # RGBA -> descartar alfa
+    if imagen.shape[-1] == 4:
         imagen = imagen[..., :3]
 
     if imagen.dtype != np.float32:
@@ -141,8 +141,6 @@ class PredictorKeras(Predictor):
         return self._modelo
 
     def _inferir(self, lote: np.ndarray) -> np.ndarray:
-        # Llamada directa en lugar de .predict(): evita la maquinaria de
-        # callbacks y troceado, que no forma parte del costo real de inferir.
         salida = self._modelo(lote, training=False)
         return np.asarray(salida).reshape(-1)
 
@@ -193,7 +191,7 @@ class PredictorTFLite(Predictor):
 
             if np.issubdtype(self._entrada["dtype"], np.integer):
                 escala, punto_cero = self._entrada["quantization"]
-                if escala == 0:  # modelo sin parametros de cuantizacion validos
+                if escala == 0:
                     escala = 1.0
                 muestra = np.round(muestra / escala + punto_cero)
                 info = np.iinfo(self._entrada["dtype"])
@@ -406,30 +404,6 @@ def predecir_dataset(predictor: Predictor, dataset: Any) -> tuple[np.ndarray, np
     return np.concatenate(y_true).astype(float), np.concatenate(y_prob).astype(float)
 
 
-# =============================================================================
-# INFERENCIA POR MOSAICOS
-#
-# El problema que resuelve
-# ------------------------
-# El modelo se entreno con parches cuya mediana es 227x227 px. Reducirlos a 160
-# es un factor 1.4x: una grieta de 3 px de ancho sobrevive como 2.1 px.
-#
-# Una fotografia de telefono mide 1200x1600. Reducirla ENTERA a 160 es un factor
-# 7.5x: esa misma grieta pasa a 0.4 px, es decir, desaparece en el filtrado
-# bilineal antes de que el modelo llegue a verla.
-#
-# Medido sobre el dataset de entrenamiento (n=400) y las fotos propias (n=40):
-#   entrenamiento  mediana  227x227   reduccion 1.4x
-#   propias        mediana 1200x1600  reduccion 7.5x
-#
-# Es decir: buena parte del "desplazamiento de dominio" que §6 atribuia al
-# material y la iluminacion es en realidad un artefacto de escala introducido
-# por nosotros mismos en el redimensionado.
-#
-# La correccion no exige reentrenar: basta con trocear la fotografia en
-# ventanas del tamano con el que el modelo aprendio y evaluar cada una. Cada
-# mosaico llega al modelo con la grieta a su escala original.
-# =============================================================================
 
 
 @dataclass(frozen=True)
@@ -552,8 +526,6 @@ def generar_ventanas(
 
     def _inicios(dimension: int) -> list[int]:
         posiciones = list(range(0, dimension - lado + 1, paso))
-        # La ultima ventana se ancla al borde para no dejar sin cubrir la franja
-        # final cuando la dimension no es multiplo del paso.
         if posiciones[-1] + lado < dimension:
             posiciones.append(dimension - lado)
         return posiciones
@@ -641,25 +613,6 @@ def predecir_por_mosaicos(
         lado=lado,
     )
 
-# =============================================================================
-# QUE MODELO USA CADA MODO
-#
-# La aplicacion no ofrece un selector de modelo, y esa ausencia es una decision
-# de diseno, no una simplificacion. Las dos formas de uso imponen restricciones
-# opuestas y cada una tiene una respuesta medida en reports/analisis.md:
-#
-#   FOTOGRAFIA - se admite un segundo de calculo, manda el acierto.
-#     Con mosaicos de 480 px sobre las 60 fotos propias (§4.6):
-#       MobileNetV2  F1 0.9355  recall 0.97  1 FN  3 FP  0.62 s/foto
-#       Ensemble     F1 0.9508  recall 0.97  1 FN  2 FP  0.78 s/foto
-#       TFLite int8  F1 0.9123  recall 0.87  4 FN  1 FP  0.28 s/foto
-#
-#   VIDEO - hay 33 ms por fotograma para sostener 30 FPS, manda la latencia.
-#       TFLite int8   4.9 ms      MobileNetV2 170.8 ms      Ensemble 189.4 ms
-#
-# Pedirle al usuario que elija seria trasladarle una decision que la aplicacion
-# puede tomar mejor: la respuesta esta medida, no depende de su preferencia.
-# =============================================================================
 
 ETIQUETAS_MODELO: dict[str, str] = {
     "ensemble": "Ensemble",
@@ -667,9 +620,6 @@ ETIQUETAS_MODELO: dict[str, str] = {
     "tflite": "TFLite int8",
 }
 
-# Orden de repliegue cuando el modelo elegido para un modo no esta en disco. Se
-# prefiere degradar a otro antes que dejar la funcionalidad muerta, pero quien
-# llame debe advertir de que no se esta usando el que dicen las mediciones.
 REPLIEGUE_POR_MODO: dict[str, tuple[str, ...]] = {
     "foto": ("keras", "ensemble", "tflite"),
     "video": ("tflite", "keras", "ensemble"),

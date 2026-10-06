@@ -120,8 +120,6 @@ def main() -> int:
     imagenes = encontradas[: args.max_imagenes]
 
     if len(encontradas) > len(imagenes):
-        # El recorte nunca es silencioso: es el fallo que hacia parecer que
-        # ninguna foto servia cuando en realidad no se habian mirado todas.
         print(
             f"  AVISO: hay {len(encontradas)} imagenes en {ruta.name}/ y solo se "
             f"procesaran las {len(imagenes)} primeras en orden alfabetico.\n"

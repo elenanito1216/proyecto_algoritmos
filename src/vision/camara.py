@@ -221,8 +221,6 @@ class LectorAsincrono:
             leido, fotograma = self._captura.read()
             if not leido or fotograma is None:
                 self._fallos += 1
-                # Un stream de red puede tener cortes puntuales; solo se
-                # abandona si son persistentes.
                 if self._fallos > 30:
                     break
                 time.sleep(0.01)
@@ -259,12 +257,10 @@ class LectorAsincrono:
         self._activo = False
         if self._hilo.is_alive():
             self._hilo.join(timeout=2.0)
-        # suppress: liberar el dispositivo es limpieza; si falla, no debe
-        # impedir que el usuario detenga la camara.
         with contextlib.suppress(Exception):
             self._captura.release()
 
-    def isOpened(self) -> bool:  # noqa: N802 - imita la interfaz de cv2.VideoCapture
+    def isOpened(self) -> bool:  # noqa: N802
         """Compatibilidad con la interfaz de ``cv2.VideoCapture``.
 
         Returns:
@@ -468,7 +464,6 @@ def normalizar_url_celular(texto: str, puerto_por_defecto: int = 8080) -> str:
         if camino:
             texto += "/" + camino
 
-    # Sin ruta, se asume la de IP Webcam, que es la aplicacion mas extendida.
     if texto.count("/") == 2:
         texto += "/video"
 
@@ -509,17 +504,9 @@ def abrir_camara(
         porque en la interfaz eso es un estado que se muestra, no un error.
     """
     if es_fuente_de_red(fuente):
-        # Opciones de baja latencia para FFMPEG. Deben fijarse ANTES de crear la
-        # captura, porque se leen al abrir el flujo:
-        #   nobuffer  - no acumular paquetes antes de entregarlos
-        #   low_delay - no esperar a poder reordenar fotogramas
-        # Reducen el retardo en origen; el hilo lector se encarga del resto.
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "fflags;nobuffer|flags;low_delay"
 
-        # FFMPEG es el backend que sabe de HTTP y MJPEG. DirectShow no.
         captura = cv2.VideoCapture(str(fuente), cv2.CAP_FFMPEG)
-        # Estas dos propiedades son las que evitan que la app se quede colgada
-        # esperando indefinidamente a una direccion que no contesta.
         captura.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, int(timeout_ms))
         captura.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, int(timeout_ms))
         if captura.isOpened():
@@ -532,8 +519,6 @@ def abrir_camara(
     if captura.isOpened():
         captura.set(cv2.CAP_PROP_FRAME_WIDTH, int(ancho))
         captura.set(cv2.CAP_PROP_FRAME_HEIGHT, int(alto))
-        # Buffer minimo: sin esto el driver acumula fotogramas y el video se ve
-        # con varios segundos de retardo respecto a lo que apunta la camara.
         captura.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     return captura

@@ -44,8 +44,6 @@ import numpy as np
 
 from src.utils.config import obtener
 
-# Colores BGR para la anotacion. Se eligen de alto contraste para que sigan
-# siendo legibles proyectados en un videobeam durante la sustentacion.
 _COLOR_LINEA_VALIDA = (0, 220, 0)
 _COLOR_LINEA_DESCARTADA = (140, 140, 140)
 _COLOR_REFERENCIA = (0, 160, 255)
@@ -109,11 +107,6 @@ class ResultadoOrientacion:
     mensaje: str
 
 
-# --------------------------------------------------------------------------- #
-# Primitivas geometricas
-# --------------------------------------------------------------------------- #
-
-
 def _longitud(x1: float, y1: float, x2: float, y2: float) -> float:
     """Longitud euclidea de un segmento.
 
@@ -154,11 +147,10 @@ def angulo_desviacion_vertical(x1: float, y1: float, x2: float, y2: float) -> fl
         >>> round(angulo_desviacion_vertical(0, 100, 10, 0), 3) > 0
         True
     """
-    # Reordenar para que (x2, y2) sea el extremo superior.
     if y1 < y2:
         x1, y1, x2, y2 = x2, y2, x1, y1
     dx = x2 - x1
-    dy = y1 - y2  # positivo por construccion
+    dy = y1 - y2
     return math.degrees(math.atan2(dx, dy))
 
 
@@ -176,7 +168,7 @@ def angulo_respecto_horizontal(x1: float, y1: float, x2: float, y2: float) -> fl
         el valor absoluto porque una recta no tiene sentido, solo direccion.
     """
     dx = x2 - x1
-    dy = -(y2 - y1)  # invertir el eje y de imagen para razonar en ejes cartesianos
+    dy = -(y2 - y1)
     if dx == 0 and dy == 0:
         return 0.0
     angulo = math.degrees(math.atan2(dy, dx)) % 180.0
@@ -258,11 +250,6 @@ def _angulo_axial_dominante(angulos: Sequence[float], pesos: Sequence[float]) ->
     return float(math.degrees(math.atan2(seno, coseno)) / 2.0) % 180.0
 
 
-# --------------------------------------------------------------------------- #
-# Deteccion de lineas
-# --------------------------------------------------------------------------- #
-
-
 def detectar_lineas(
     imagen_bgr: np.ndarray,
     config: dict[str, Any],
@@ -294,13 +281,11 @@ def detectar_lineas(
     """
     cfg = config.get("inclinacion", {})
     k = int(cfg.get("desenfoque_kernel", 5))
-    k = k if k % 2 == 1 else k + 1  # el kernel gaussiano debe ser impar
+    k = k if k % 2 == 1 else k + 1
 
     bajo = int(canny_bajo if canny_bajo is not None else cfg.get("canny_umbral_bajo", 50))
     alto = int(canny_alto if canny_alto is not None else cfg.get("canny_umbral_alto", 150))
     if alto <= bajo:
-        # Canny exige alto > bajo; se corrige en silencio para que un slider mal
-        # puesto en la interfaz no lance una excepcion durante la demo.
         alto = bajo + 1
 
     gris = cv2.cvtColor(imagen_bgr, cv2.COLOR_BGR2GRAY)
@@ -329,11 +314,6 @@ def detectar_lineas(
     if lineas is None:
         return bordes, np.empty((0, 4), dtype=np.int32)
     return bordes, lineas.reshape(-1, 4)
-
-
-# --------------------------------------------------------------------------- #
-# Estimacion de desaplome
-# --------------------------------------------------------------------------- #
 
 
 def _motivo_inverosimil(
@@ -494,7 +474,6 @@ def estimar_inclinacion(
 
     angulo_bruto = mediana_ponderada(angulos, longitudes)
 
-    # Refinamiento: conservar solo lo coherente con la estimacion inicial.
     margen_coherencia = 5.0
     coherentes = [
         (linea, ang, largo)
@@ -505,7 +484,7 @@ def estimar_inclinacion(
         lineas_c = [c[0] for c in coherentes]
         angulos_c = [c[1] for c in coherentes]
         pesos_c = [c[2] for c in coherentes]
-    else:  # pragma: no cover - defensivo; la mediana siempre deja algo dentro
+    else:  # pragma: no cover
         lineas_c, angulos_c, pesos_c = validas, angulos, longitudes
 
     angulo_final = mediana_ponderada(angulos_c, pesos_c)
@@ -527,10 +506,6 @@ def estimar_inclinacion(
             "y no debe usarse para decidir."
         )
 
-    # Guardarrailes de verosimilitud: solo se aplican si la medida habia pasado
-    # el filtro de confianza. Ninguno corrige el angulo; lo declaran no fiable
-    # con el motivo, que es lo que el motor de reglas necesita para no disparar
-    # R5/R6 sobre una medida que no describe el elemento (ver analisis.md, §4.5).
     motivo_rechazo = None
     if fiable and aplicar_guardarrailes:
         motivo_rechazo = _motivo_inverosimil(
@@ -585,8 +560,6 @@ def anotar_imagen(
         cv2.line(lienzo, (x1, y1), (x2, y2), _COLOR_LINEA_VALIDA, grosor + 1)
 
     if dibujar_referencia and resultado.angulo_grados is not None:
-        # Vertical de referencia por el centro: da al observador humano el mismo
-        # marco que usa el algoritmo.
         cx = ancho // 2
         for y in range(0, alto, 20):
             cv2.line(lienzo, (cx, y), (cx, min(y + 10, alto)), _COLOR_REFERENCIA, grosor)
@@ -613,11 +586,6 @@ def anotar_imagen(
         cv2.LINE_AA,
     )
     return lienzo
-
-
-# --------------------------------------------------------------------------- #
-# Orientacion de la grieta
-# --------------------------------------------------------------------------- #
 
 
 def clasificar_orientacion_grieta(
@@ -654,8 +622,6 @@ def clasificar_orientacion_grieta(
     umbral_h = float(obtener(config, "orientacion_grieta.umbral_horizontal", 25.0))
     umbral_v = float(obtener(config, "orientacion_grieta.umbral_vertical", 65.0))
 
-    # La grieta suele producir segmentos mas cortos que el eje de una columna,
-    # asi que se relaja la longitud minima a la mitad si no se pasa explicita.
     if min_longitud is None:
         lado_menor = min(imagen_bgr.shape[:2])
         min_longitud = max(15, int(lado_menor * 0.08))
@@ -679,8 +645,6 @@ def clasificar_orientacion_grieta(
     pesos = [_longitud(*linea) for linea in lineas]
 
     dominante = _angulo_axial_dominante(angulos, pesos)
-    # Llevar a [0, 90]: la inclinacion respecto a la horizontal no distingue
-    # entre subir hacia la derecha o hacia la izquierda.
     angulo = dominante if dominante <= 90.0 else 180.0 - dominante
 
     if angulo < umbral_h:
@@ -699,11 +663,6 @@ def clasificar_orientacion_grieta(
             f"horizontal), a partir de {len(lineas)} segmentos."
         ),
     )
-
-
-# --------------------------------------------------------------------------- #
-# Validacion sin ground truth: rotaciones controladas
-# --------------------------------------------------------------------------- #
 
 
 def rotar_imagen(imagen_bgr: np.ndarray, angulo_grados: float, recorte: float = 0.8) -> np.ndarray:
@@ -790,11 +749,6 @@ def validar_con_rotaciones(
         for signo in (1.0, -1.0):
             alpha = signo * float(magnitud)
             rotada = rotar_imagen(imagen_bgr, alpha)
-            # Los guardarrailes se desactivan a proposito: este experimento
-            # fabrica desaplomes de hasta +-10 grados, que en una fotografia de
-            # inspeccion se rechazarian por inverosimiles. Aqui lo que se mide es
-            # la fidelidad geometrica del estimador, no la plausibilidad de la
-            # escena, asi que aplicarlos impediria justamente medir el error.
             estimacion = estimar_inclinacion(rotada, config, aplicar_guardarrailes=False)
             esperado = referencia - alpha
 

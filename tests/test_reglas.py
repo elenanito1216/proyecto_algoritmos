@@ -20,11 +20,6 @@ def _codigos(evaluacion: EvaluacionRiesgo) -> set[str]:
     return {r.codigo for r in evaluacion.reglas}
 
 
-# --------------------------------------------------------------------------- #
-# Validacion de entradas
-# --------------------------------------------------------------------------- #
-
-
 @pytest.mark.parametrize("probabilidad", [-0.01, 1.01, 2.0, -5.0])
 def test_probabilidad_fuera_de_rango_lanza_error(
     probabilidad: float, config_riesgo_minima: dict[str, Any]
@@ -41,11 +36,6 @@ def test_probabilidad_en_los_extremos_es_valida(
     assert evaluacion.nivel in NIVELES
 
 
-# --------------------------------------------------------------------------- #
-# Caso base: sin evidencia
-# --------------------------------------------------------------------------- #
-
-
 def test_sin_grieta_ni_desaplome_es_riesgo_bajo(config_riesgo_minima: dict[str, Any]) -> None:
     evaluacion = evaluar_riesgo(0.05, config_riesgo_minima, elemento="muro_divisorio")
     assert evaluacion.nivel == "Bajo"
@@ -56,17 +46,11 @@ def test_sin_grieta_ni_desaplome_es_riesgo_bajo(config_riesgo_minima: dict[str, 
 def test_sin_grieta_no_dispara_reglas_de_orientacion(
     config_riesgo_minima: dict[str, Any],
 ) -> None:
-    # Sin grieta detectada, la orientacion es ruido geometrico: no debe pesar.
     evaluacion = evaluar_riesgo(
         0.10, config_riesgo_minima, elemento="columna", orientacion_grieta="diagonal"
     )
     assert "R3" not in _codigos(evaluacion)
     assert evaluacion.nivel == "Bajo"
-
-
-# --------------------------------------------------------------------------- #
-# Deteccion de grieta
-# --------------------------------------------------------------------------- #
 
 
 def test_grieta_en_elemento_no_critico_es_riesgo_medio(
@@ -91,11 +75,6 @@ def test_grieta_en_elemento_critico_dispara_regla_de_criticidad(
     assert "R7" in _codigos(evaluacion)
 
 
-# --------------------------------------------------------------------------- #
-# Orientacion de la grieta
-# --------------------------------------------------------------------------- #
-
-
 @pytest.mark.parametrize(
     ("elemento", "orientacion"),
     [
@@ -116,7 +95,6 @@ def test_orientacion_grave_eleva_a_riesgo_alto(
 
 
 def test_grieta_vertical_en_muro_no_es_grave(config_riesgo_minima: dict[str, Any]) -> None:
-    # Una fisura vertical fina en un muro suele ser retraccion del mortero.
     evaluacion = evaluar_riesgo(
         0.70, config_riesgo_minima, elemento="muro_portante", orientacion_grieta="vertical"
     )
@@ -144,11 +122,6 @@ def test_orientacion_es_insensible_a_mayusculas(config_riesgo_minima: dict[str, 
     assert a.nivel == b.nivel == "Alto"
 
 
-# --------------------------------------------------------------------------- #
-# Desaplome
-# --------------------------------------------------------------------------- #
-
-
 def test_desaplome_severo_eleva_a_riesgo_alto(config_riesgo_minima: dict[str, Any]) -> None:
     evaluacion = evaluar_riesgo(
         0.05,
@@ -174,7 +147,6 @@ def test_desaplome_de_atencion_es_riesgo_medio(config_riesgo_minima: dict[str, A
 
 
 def test_el_signo_del_desaplome_es_irrelevante(config_riesgo_minima: dict[str, Any]) -> None:
-    # Inclinarse a la izquierda no es menos grave que inclinarse a la derecha.
     derecha = evaluar_riesgo(
         0.05, config_riesgo_minima, angulo_desaplome=2.5, confianza_inclinacion=5
     )
@@ -200,14 +172,7 @@ def test_desaplome_ausente_genera_advertencia(config_riesgo_minima: dict[str, An
     assert any("no se pudo medir" in a.lower() for a in evaluacion.advertencias)
 
 
-# --------------------------------------------------------------------------- #
-# Composicion de reglas
-# --------------------------------------------------------------------------- #
-
-
 def test_grieta_mas_desaplome_medio_escala_a_alto(config_riesgo_minima: dict[str, Any]) -> None:
-    # Dos senales de severidad media concurrentes describen un cuadro peor que
-    # cualquiera de ellas por separado: R8 debe elevar el nivel.
     solo_grieta = evaluar_riesgo(0.70, config_riesgo_minima, elemento="muro_divisorio")
     solo_desaplome = evaluar_riesgo(
         0.05,
@@ -254,11 +219,6 @@ def test_reglas_criticas_devuelve_solo_las_del_nivel_final(
     assert all(r.severidad == evaluacion.severidad for r in criticas)
 
 
-# --------------------------------------------------------------------------- #
-# Explicabilidad y monotonia
-# --------------------------------------------------------------------------- #
-
-
 def test_toda_regla_trae_justificacion_de_ingenieria(
     config_riesgo_minima: dict[str, Any],
 ) -> None:
@@ -284,8 +244,6 @@ def test_la_salida_es_serializable_a_json(config_riesgo_minima: dict[str, Any]) 
 
 
 def test_mas_probabilidad_nunca_reduce_el_riesgo(config_riesgo_minima: dict[str, Any]) -> None:
-    # Propiedad de monotonia: subir la evidencia de grieta jamas debe rebajar el
-    # nivel. Si esto falla, hay una regla mal compuesta.
     niveles = [
         evaluar_riesgo(p / 20, config_riesgo_minima, elemento="columna").severidad
         for p in range(21)
@@ -301,11 +259,6 @@ def test_mas_desaplome_nunca_reduce_el_riesgo(config_riesgo_minima: dict[str, An
         for g in range(0, 20)
     ]
     assert niveles == sorted(niveles)
-
-
-# --------------------------------------------------------------------------- #
-# Coherencia con el config.yaml real
-# --------------------------------------------------------------------------- #
 
 
 def test_el_config_real_produce_los_tres_niveles(config: dict[str, Any]) -> None:

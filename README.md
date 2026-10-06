@@ -15,6 +15,7 @@ Si dispone de poco tiempo, estas son las secciones que concentran el trabajo:
 | Si le interesa… | Vaya a |
 |---|---|
 | Qué hace el sistema y qué tan bien funciona | [Qué hace](#qué-hace-el-sistema) y [Resultados](#resultados-medidos) |
+| Cómo se entrenó la red neuronal | [Cómo aprendió el modelo](#cómo-aprendió-el-modelo-a-reconocer-grietas) |
 | El análisis crítico y los hallazgos | [Lo que se descubrió al medir](#lo-que-se-descubrió-al-medir) |
 | El informe completo | [`reports/analisis.md`](reports/analisis.md) |
 | Ejecutarlo | [Cómo ponerlo en marcha](#cómo-ponerlo-en-marcha) |
@@ -53,6 +54,120 @@ Se podría haber entrenado una única red neuronal que dijera directamente «rie
 
 ---
 
+## Cómo aprendió el modelo a reconocer grietas
+
+Una red neuronal no se programa con reglas del tipo «si hay una línea oscura, es una grieta». Se le muestran miles de ejemplos ya etiquetados y ella misma va corrigiendo, poco a poco, sus criterios internos cada vez que se equivoca. Esta sección cuenta cómo se hizo, con las cifras que dejó registradas el propio entrenamiento.
+
+### 1. El material de estudio
+
+**58 138 fotografías** de superficies de hormigón, cada una etiquetada como «con grieta» o «sin grieta». Se repartieron al azar en tres grupos que nunca se mezclan:
+
+| Grupo | Fotografías | Para qué sirve | Equivalente escolar |
+|---|---|---|---|
+| Estudio | 40 696 (70 %) | El modelo las ve una y otra vez y aprende de sus errores | Los ejercicios del libro |
+| Validación | 8 721 (15 %) | Se consultan al terminar cada vuelta, para saber si está aprendiendo o memorizando | Los simulacros |
+| Prueba | 8 721 (15 %) | Se usan una sola vez, al final, para poner la nota | El examen final |
+
+**Hay más fotos sin grieta (59 %) que con grieta (41 %).** Si no se corrige, el modelo descubre que responder «no hay grieta» es la apuesta que más veces acierta — y en seguridad estructural callarse una grieta es justamente el error caro. Por eso, durante el estudio, **cada foto con grieta cuenta 1.44 veces más** que una sin grieta: equivocarse en ellas le cuesta más al modelo, y aprende a no hacerlo.
+
+### 2. Cómo se le presentan las fotografías
+
+**Todas se reducen a 160 × 160 píxeles.** Es el tamaño con el que trabaja la red y lo que permite entrenarla en un portátil. Esta reducción tuvo una consecuencia que solo se descubrió después, con las fotografías propias, y que se cuenta en el [hallazgo 2](#2-el-problema-no-estaba-en-el-modelo-estaba-en-cómo-le-entregábamos-las-fotos).
+
+**Cada vez que el modelo ve una foto de estudio, la ve un poco distinta.** Se voltea, se gira hasta 36°, se acerca o aleja un 10 %, se le cambia el brillo y el contraste hasta un 15 % y se desplaza ligeramente. Es lo que se llama *aumento de datos*, y tiene dos razones:
+
+- **Una grieta no tiene «arriba».** Volteada o girada sigue siendo una grieta, y el modelo debe aprender que lo que importa es su forma, no su orientación ni la luz con que se fotografió.
+- **Multiplica el material sin fotografiar nada nuevo.** Como las alteraciones son aleatorias, el modelo prácticamente nunca ve dos veces la misma imagen exacta, y eso le dificulta memorizar.
+
+Estas alteraciones **se aplican solo a las fotos de estudio**. Las de validación y prueba se usan tal cual: el examen debe parecerse a la realidad, no ser más fácil ni más difícil que ella.
+
+### 3. Dos modelos, dos estrategias
+
+Se entrenaron dos redes muy distintas, para poder comparar.
+
+**La línea base: aprender a ver desde cero.** Una red pequeña diseñada por el equipo, con **28 145 parámetros** (los ajustes internos que la red va corrigiendo). Tiene tres bloques que detectan rasgos cada vez más complejos —primero bordes, luego texturas, luego formas— y empieza sin saber absolutamente nada. Sirve de vara de medir: si una técnica más sofisticada no la supera, no vale la pena.
+
+**MobileNetV2: partir de un ojo ya entrenado.** Una red publicada por Google que ya fue entrenada con **1.2 millones de fotografías cotidianas** —animales, vehículos, muebles—. No sabe nada de grietas, pero ya sabe *ver*: reconoce bordes, texturas y contrastes. Es como enseñarle a detectar grietas a alguien que ya sabe mirar, en lugar de a un recién nacido. A esto se le llama *transfer learning*, y se hizo en dos etapas:
+
+| Etapa | Qué se entrena | Velocidad de aprendizaje | Vueltas |
+|---|---|---|---|
+| **1. Red congelada** | Solo una pieza nueva al final, que traduce lo que la red ve en «grieta» o «no grieta». La red original no se toca | Normal | 10 |
+| **2. Ajuste fino** | Además, las últimas 19 capas de la red original | **100 veces más lenta** | 5 |
+
+¿Por qué tan lenta en la segunda etapa? Porque esas capas ya contienen un conocimiento valioso. A la velocidad normal se sobrescribirían en pocas vueltas y se perdería lo que costó 1.2 millones de imágenes aprender. **Es retocar, no reescribir.**
+
+### 4. Tres reglas que vigilan el aprendizaje
+
+Una *vuelta* (en la jerga, una *época*) es una pasada completa por las 40 696 fotos de estudio. Al terminar cada una, el modelo hace un simulacro con las de validación, y tres reglas automáticas deciden qué pasa después:
+
+1. **Si el simulacro no mejora en dos vueltas seguidas, se aprende más despacio.** La velocidad de aprendizaje se reduce a la mitad, como un estudiante que, al estancarse, pasa a repasar con más detalle.
+2. **Si no mejora en cinco vueltas, se detiene.** Seguir solo serviría para memorizar las fotos de estudio, no para aprender a reconocer grietas nuevas.
+3. **Se conserva la mejor vuelta, no la última.**
+
+### 5. Cómo fue, vuelta a vuelta
+
+**Línea base.** Las cifras son del simulacro: el *error* mide cuánto se equivoca el modelo (cuanto más bajo, mejor) y el *acierto*, el porcentaje de fotos que clasifica bien.
+
+| Vuelta | Error | Acierto | Qué pasó |
+|---|---|---|---|
+| 1 | 0.39 | 89.4 % | |
+| 2 | 7.83 | 41.1 % | **Se desploma** |
+| 3 | 32.14 | 41.0 % | Sigue desplomado; la regla 1 baja la velocidad a la mitad |
+| 4 | 0.17 | 93.5 % | Se recupera |
+| 7 | 0.14 | 94.7 % | La velocidad se vuelve a reducir |
+| **12** | **0.13** | **95.1 %** | **La mejor vuelta: es el modelo que se guarda** |
+| 17 | 0.14 | 95.2 % | Cinco vueltas sin mejorar: la regla 2 lo detiene |
+
+Las vueltas 2 y 3 merecen una explicación, porque se dejaron a la vista a propósito. El acierto cae al **41 %, que es exactamente la proporción de fotos con grieta**: durante esas dos vueltas el modelo respondía «grieta» a todo. No es un error de programación, sino la inestabilidad típica de una red que parte de cero con una velocidad de aprendizaje alta. La recuperación coincide con la reducción de velocidad de la regla 1, y **la regla 3 es la que garantiza que un tropiezo así nunca llegue al modelo final**: lo que se guarda es la vuelta 12.
+
+**MobileNetV2.**
+
+| Vuelta | Etapa | Error | Acierto | Qué pasó |
+|---|---|---|---|---|
+| 1 | Congelada | 0.14 | 96.0 % | **Ya supera a la mejor vuelta de la línea base** |
+| 5 | Congelada | 0.12 | 96.1 % | |
+| 9 | Congelada | 0.11 | 96.2 % | Mejor vuelta de la primera etapa |
+| 11 | Ajuste fino | 0.10 | 96.3 % | Empieza el ajuste, a velocidad cien veces menor |
+| **14** | **Ajuste fino** | **0.09** | **96.8 %** | **La mejor vuelta: es el modelo que se guarda** |
+| 15 | Ajuste fino | 0.11 | 96.5 % | Fin de la segunda etapa |
+
+La primera fila es la que resume el transfer learning: **en su primera vuelta, MobileNetV2 ya acierta más que la línea base después de doce**. Eso es lo que vale partir de un ojo ya entrenado.
+
+El ajuste fino, medido sobre las 8 721 fotos de validación:
+
+| | Tras la etapa 1 | Tras el ajuste fino | Cambio |
+|---|---|---|---|
+| Grietas que se le escapan | 284 | **255** | 10 % menos |
+| Falsas alarmas | 49 | **26** | 47 % menos |
+
+> **Una advertencia sobre estas cifras.** El grupo de validación tiene el mismo defecto que el [hallazgo 1](#1-el-conjunto-de-datos-público-estaba-contaminado) describe para el de prueba: **una de cada seis fotos de validación ya estaba entre las de estudio**. Por eso estos aciertos sirven para comparar vueltas y etapas entre sí —todas tienen la misma ventaja—, pero no como medida del acierto real. Ese está en [Resultados medidos](#resultados-medidos), calculado después de retirar los duplicados.
+
+### 6. Comprimirlo para que quepa en un teléfono
+
+El modelo entrenado ocupa **13.90 MB**. Para llevarlo a un teléfono se comprimió en dos pasos:
+
+1. **Quitarle lo que solo sirve para entrenar**, como las notas internas que la red lleva sobre cómo ha ido corrigiéndose: pasa a **5.46 MB**.
+2. **Cuantizarlo**: guardar cada uno de sus números con 8 bits en lugar de 32. Es parecido a redondear los precios a pesos enteros: se pierde algo de detalle, pero cada número ocupa la cuarta parte. Para decidir cómo redondear sin estropear el modelo se usan **200 fotografías de calibración**. Resultado: **1.74 MB**.
+
+En total, **8 veces más pequeño y 38.5 veces más rápido**, a cambio de una pérdida pequeña de acierto que el informe cuantifica en §3.1. Es la versión que usa el modo de vídeo en vivo.
+
+### 7. Cuánto costó
+
+Todo el entrenamiento se hizo en el procesador de un portátil corriente, **sin tarjeta gráfica**:
+
+| Modelo | Vueltas | Tiempo por vuelta | Total |
+|---|---|---|---|
+| Línea base | 17 | 7.3 min | 2 h 3 min |
+| MobileNetV2, etapa 1 | 10 | 7.9 min | 1 h 19 min |
+| MobileNetV2, ajuste fino | 5 | 8.5 min | 42 min |
+| **Total** | | | **4 h 5 min** |
+
+Un resultado que sorprendió: la línea base, con **52 veces menos parámetros**, tardó por vuelta **solo un 8 % menos** que MobileNetV2. El tiempo no se iba en el cálculo de la red sino en leer y descomprimir las 40 696 fotografías del disco en cada vuelta. Antes de medirlo, el equipo suponía lo contrario.
+
+**Para ver más:** las curvas completas de las dos redes están en la pestaña **📊 Métricas del modelo** de la aplicación; el análisis detallado, en §3.1 y §3.3 de [`reports/analisis.md`](reports/analisis.md); y los comandos para repetir el entrenamiento, en [Reconstruirlo todo desde cero](#5-reconstruirlo-todo-desde-cero).
+
+---
+
 ## Resultados medidos
 
 ### Detección de grietas
@@ -64,7 +179,7 @@ Se podría haber entrenado una única red neuronal que dijera directamente «rie
 | Tiempo por fotografía | **4.72 milisegundos** | Unas 212 fotografías por segundo, en un computador corriente sin tarjeta gráfica |
 | Tamaño del modelo | **1.74 MB** | Cabe holgadamente en un teléfono |
 
-Ese modelo comprimido para teléfono es **30.8 veces más rápido y 8 veces más pequeño** que la versión original, sin perder acierto de forma apreciable.
+Ese modelo comprimido para teléfono es **38.5 veces más rápido y 8 veces más pequeño** que la versión original, sin perder acierto de forma apreciable.
 
 ### Medición de la grieta
 
@@ -90,10 +205,6 @@ El ancho es la magnitud con la que la NSR-10 gradúa el daño, y era **la limita
 | Fotografías en las que consigue medir | **1 de cada 40** |
 
 La segunda cifra es incómoda y se reporta igual. El módulo es **muy preciso cuando funciona, y funciona pocas veces**: necesita ver el borde vertical completo de una columna o un muro, y la mayoría de las fotografías son primeros planos de la superficie. Reportar solo el 0.039° habría sido contar media historia.
-
-### Costo de construirlo
-
-**4 horas y 5 minutos** de cómputo en un portátil corriente, sin tarjeta gráfica, para entrenar los tres modelos. El proyecto está diseñado para reproducirse sin infraestructura especial.
 
 ---
 
@@ -426,7 +537,10 @@ Los términos que aparecen en el informe, en lenguaje corriente:
 | **Marcador ArUco** | Cuadrado en blanco y negro con un código dentro. Impreso a tamaño conocido, permite convertir píxeles a milímetros |
 | **Tortuosidad** | Cuánto serpentea la grieta: su recorrido dividido por la distancia entre sus extremos. Vale 1 si es recta |
 | **Segmentar** | Separar en la imagen los píxeles que son grieta de los que son pared |
-| **Época** | Una vuelta completa del entrenamiento a todas las imágenes disponibles |
+| **Época** | Una vuelta completa del entrenamiento a todas las imágenes de estudio |
+| **Aumento de datos** | Mostrarle al modelo cada foto de estudio ligeramente alterada —volteada, girada, con otra luz— para que aprenda la forma de la grieta y no la foto concreta |
+| **Validación** | Fotografías apartadas que el modelo no estudia y que se usan como simulacro al final de cada época |
+| **Parámetros** | Los ajustes internos de la red que el entrenamiento va corrigiendo. Son los que guardan lo aprendido |
 
 ---
 

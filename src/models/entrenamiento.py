@@ -130,8 +130,6 @@ def construir_callbacks(
             tf.keras.callbacks.ModelCheckpoint(
                 filepath=str(_ruta_checkpoint(config, nombre)),
                 monitor=chk.get("monitor", "val_loss"),
-                # save_best_only=False es intencional: para poder REANUDAR hace
-                # falta el estado de la ultima epoca, no el de la mejor.
                 save_best_only=bool(chk.get("guardar_solo_mejor", False)),
                 save_weights_only=False,
                 save_freq="epoch",
@@ -266,7 +264,7 @@ def resumen_entrenamiento(
     epocas = max((len(v) for v in historial.values()), default=0)
     mejor_val_loss = None
     if historial.get("val_loss"):
-        finitos = [v for v in historial["val_loss"] if v == v]  # descarta NaN
+        finitos = [v for v in historial["val_loss"] if v == v]
         mejor_val_loss = min(finitos) if finitos else None
 
     resumen: dict[str, Any] = {

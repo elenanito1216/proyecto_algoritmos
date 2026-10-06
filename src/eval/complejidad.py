@@ -204,7 +204,6 @@ def medir_latencia_tflite(
     generador = np.random.default_rng(semilla)
 
     if np.issubdtype(dtype, np.integer):
-        # Modelo con entrada cuantizada: se generan enteros en el rango del tipo.
         info = np.iinfo(dtype)
         entrada = generador.integers(info.min, info.max, size=forma, dtype=dtype)
     else:
