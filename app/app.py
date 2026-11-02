@@ -2163,8 +2163,14 @@ def _capturar_y_medir(
 
     referencia = detectar_escala(fotograma, config)
     recorte = fotograma[region[1] : region[3], region[0] : region[2]]
-    medidas = medir_grieta(recorte, config, escala_mm_por_px=referencia.mm_por_px)
-    mascara, puentes, _ = segmentar_grieta(recorte, config)
+    # La camara entrega mas resolucion que las fotos con que se calibro la
+    # medicion: la grieta se ve mas ancha que los filtros y la textura le gana.
+    # Se mide reducida a un lado de trabajo fijo (config: lado_trabajo_vivo_px).
+    medicion_vivo = dict(obtener(config, "medicion", {}) or {})
+    medicion_vivo["lado_trabajo_px"] = int(medicion_vivo.get("lado_trabajo_vivo_px", 640))
+    config_medir = {**config, "medicion": medicion_vivo}
+    medidas = medir_grieta(recorte, config_medir, escala_mm_por_px=referencia.mm_por_px)
+    mascara, puentes, _ = segmentar_grieta(recorte, config_medir)
 
     inclinacion = estimar_inclinacion(
         fotograma,

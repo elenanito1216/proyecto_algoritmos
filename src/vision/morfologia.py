@@ -249,7 +249,67 @@ def _salto_de_fondo(gris: np.ndarray, componente: np.ndarray) -> float:
     return abs(float(np.median(saltos))) if saltos else 0.0
 
 
+def _factor_trabajo(imagen: np.ndarray, config: dict[str, Any]) -> float:
+    """Calcula cuanto hay que reducir una imagen para medirla.
+
+    Los filtros de la segmentacion trabajan en pixeles fijos: el black-hat con
+    un nucleo de 15 px y la cresta con escalas de 1 a 3 px. Eso los ata a una
+    resolucion. Una grieta ancha fotografiada de cerca, o con una camara de mas
+    resolucion, mide en pixeles mas de lo que esos filtros abarcan, se pierde a
+    trozos y la textura le gana. Medido sobre la misma escena ampliada:
+
+        resolucion   recorrido medido de la grieta
+           1.0x           492 px
+           2.0x           288 px
+           3.0x           176 px
+
+    Reducir siempre a un lado de trabajo fijo devuelve cada imagen a la escala
+    para la que los filtros estan calibrados.
+
+    Args:
+        imagen: Imagen a medir.
+        config: Configuracion del proyecto.
+
+    Returns:
+        Factor de reduccion, 1.0 si la imagen ya cabe en el lado de trabajo.
+    """
+    lado = int(obtener(config, "medicion.lado_trabajo_px", 640) or 0)
+    alto, ancho = np.asarray(imagen).shape[:2]
+    if lado <= 0 or max(alto, ancho) <= lado:
+        return 1.0
+    return lado / float(max(alto, ancho))
+
+
 def segmentar_grieta(
+    imagen_bgr: np.ndarray, config: dict[str, Any]
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Aisla la fisura a la resolucion de trabajo y devuelve la mascara a tamano original.
+
+    Args:
+        imagen_bgr: Recorte en BGR donde se sabe que hay una grieta.
+        config: Configuracion del proyecto.
+
+    Returns:
+        Tupla ``(mascara, puentes, fragmentos_descartados)`` del tamano de la
+        imagen recibida, para que se pueda dibujar sobre ella.
+    """
+    import cv2
+
+    imagen = np.asarray(imagen_bgr)
+    factor = _factor_trabajo(imagen, config)
+    if factor >= 1.0:
+        return _segmentar_a_escala(imagen, config)
+    alto, ancho = imagen.shape[:2]
+    reducida = cv2.resize(imagen, None, fx=factor, fy=factor, interpolation=cv2.INTER_AREA)
+    mascara, puentes, descartados = _segmentar_a_escala(reducida, config)
+    return (
+        cv2.resize(mascara, (ancho, alto), interpolation=cv2.INTER_NEAREST),
+        cv2.resize(puentes, (ancho, alto), interpolation=cv2.INTER_NEAREST),
+        descartados,
+    )
+
+
+def _segmentar_a_escala(
     imagen_bgr: np.ndarray, config: dict[str, Any]
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Aisla la fisura del fondo devolviendo una mascara binaria.
@@ -1127,6 +1187,20 @@ def medir_grieta(
     imagen = np.asarray(imagen_bgr)
     if imagen.ndim == 2:
         imagen = cv2.cvtColor(imagen, cv2.COLOR_GRAY2BGR)
+
+    # La segmentacion se hace a la resolucion de trabajo y la mascara vuelve a
+    # tamano original. La poda de puas se calibro en pixeles de trabajo y se pasa
+    # a pixeles originales. El sesgo de ancho NO se escala: medido sobre lineas de
+    # grosor conocido, al reducir con INTER_AREA el borde se suaviza y el sesgo
+    # real en pixeles originales queda cerca de los 3 px de siempre. Escalarlo
+    # dejaba el ancho en el 63 % del real; sin escalar queda entre el 83 y el 99 %.
+    factor = _factor_trabajo(imagen, config)
+    if factor < 1.0:
+        medicion = dict(obtener(config, "medicion", {}) or {})
+        medicion["poda_espolones_px"] = int(
+            round(int(medicion.get("poda_espolones_px", 12)) / factor)
+        )
+        config = {**config, "medicion": medicion}
 
     mascara, puentes, fragmentos = segmentar_grieta(imagen, config)
     medidas = _medir_sobre(mascara, puentes, fragmentos, config, escala_mm_por_px)

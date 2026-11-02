@@ -366,6 +366,17 @@ medicion:
     tortuosidad_maxima: 3.0
     ramificacion_maxima: 6.0
 
+  # --- Resolucion de trabajo ---
+  # Los filtros miden en pixeles fijos (black-hat de 15 px, cresta de 1 a 3 px),
+  # asi que la imagen se reduce a este lado mayor antes de segmentar. Sin esto
+  # la medicion dependia de la resolucion: la misma grieta media 492 px a 1x y
+  # 176 px a 3x, y en la camara en vivo la textura le ganaba a la fisura.
+  # 0 = sin reducir. En modo foto se deja en 0: sus 31 fotografias se validaron
+  # una a una sin reduccion y cambiarlo exige volver a revisarlas.
+  lado_trabajo_px: 0
+  # La medicion en vivo (boton Medir) si reduce: es donde fallaba.
+  lado_trabajo_vivo_px: 640
+
   # --- Deteccion de la fisura: forma de cresta, no brillo ---
   # El black-hat pregunta "cuanto mas oscuro es esto que su entorno", y sobre un
   # panete rugoso eso enciende el 30% de la imagen: la grieta queda pegada a la
