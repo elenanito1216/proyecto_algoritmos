@@ -568,4 +568,9 @@ Los términos que aparecen en el informe, en lenguaje corriente:
 
 ## Equipo
 
-Proyecto desarrollado por Santiago Gómez García y equipo para la asignatura *Algoritmos y Programación*, Ingeniería en Inteligencia Artificial, Universidad Industrial de Santander, semestre 2026-2.
+Proyecto desarrollado para la asignatura *Algoritmos y Programación*, Ingeniería en Inteligencia Artificial, Universidad Industrial de Santander, semestre 2026-2.
+
+| Integrante | Rol en el proyecto | GitHub |
+|---|---|---|
+| Santiago Gómez García | Modelado y evaluación (IA)| [@elenanito1216](https://github.com/elenanito1216) |
+| Juan Fernando Cardona Palomino | Visión, riesgo y aplicación | [@fernando0709](https://github.com/fernando0709) |
